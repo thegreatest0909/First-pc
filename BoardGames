@@ -1,0 +1,850 @@
+import tkinter as tk
+from tkinter import ttk, messagebox, filedialog
+import sqlite3
+from pathlib import Path
+import pandas as pd
+from datetime import datetime
+import os
+import json
+import sys
+
+# Цветовая схема
+BG_COLOR = "#2b1055"  # Фиолетовый фон
+CARD_BG = "#3e1a6f"  # Карточки формы и таблицы
+FG_LIGHT = "#f0e6ff"  # Светлый текст
+ACCENT = "#b47cff"  # Акцентный цвет
+ENTRY_BG = "#f7f3ff"  # Фон полей ввода
+BUTTON_BORDER = "#d4b8ff"  # Обводка для кнопок-смайликов
+FILTER_BG = "#4a2a8a"  # Фон панели фильтра
+
+# Название приложения (для папки в AppData)
+APP_NAME = "BoardGames"
+
+
+def get_app_data_path():
+    """
+    Возвращает путь к папке приложения в AppData
+    Создаёт папку, если её нет
+    """
+    if getattr(sys, 'frozen', False):
+        # Запущено как .exe
+        app_data = os.environ.get('APPDATA', os.path.expanduser('~\\AppData\\Roaming'))
+    else:
+        # Запущено как .py (разработка)
+        app_data = os.environ.get('APPDATA', os.path.expanduser('~\\AppData\\Roaming'))
+
+    # Путь к папке приложения
+    app_folder = os.path.join(app_data, APP_NAME)
+
+    # Создаём папку, если её нет
+    if not os.path.exists(app_folder):
+        os.makedirs(app_folder)
+
+    return app_folder
+
+
+# Получаем пути к системным файлам
+APP_DATA_PATH = get_app_data_path()
+SETTINGS_FILE = os.path.join(APP_DATA_PATH, "app_settings.json")
+DB_FILE = os.path.join(APP_DATA_PATH, "board_games.db")
+
+
+def load_settings():
+    """Загружает сохранённые настройки"""
+    default_settings = {
+        "last_export_path": str(Path.home() / "Desktop"),
+        "last_import_path": str(Path.home() / "Desktop"),
+        "window_geometry": "1300x750"
+    }
+    if os.path.exists(SETTINGS_FILE):
+        try:
+            with open(SETTINGS_FILE, 'r', encoding='utf-8') as f:
+                saved = json.load(f)
+                default_settings.update(saved)
+        except:
+            pass
+    return default_settings
+
+
+def save_settings(settings):
+    """Сохраняет настройки"""
+    try:
+        with open(SETTINGS_FILE, 'w', encoding='utf-8') as f:
+            json.dump(settings, f, ensure_ascii=False, indent=2)
+    except:
+        pass
+
+
+# Инициализация базы данных
+def init_db():
+    conn = sqlite3.connect(DB_FILE)
+    cursor = conn.cursor()
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS games (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL,
+            players TEXT,
+            age TEXT,
+            time_minutes TEXT,
+            interaction TEXT,
+            randomness TEXT,
+            quantity INTEGER DEFAULT 1
+        )
+    ''')
+    conn.commit()
+    conn.close()
+
+
+# Основное приложение
+class BoardGamesApp(tk.Tk):
+    def __init__(self):
+        super().__init__()
+        self.settings = load_settings()
+        self.title("Настольные игры — Система управления базой данных")
+        self.geometry(self.settings.get("window_geometry", "1300x750"))
+        self.configure(bg=BG_COLOR)
+        self.resizable(True, True)
+
+        # Установка иконки окна (если есть)
+        try:
+            icon_path = os.path.join(APP_DATA_PATH, "icon.ico")
+            if os.path.exists(icon_path):
+                self.iconbitmap(icon_path)
+        except:
+            pass
+
+        init_db()
+        self.filter_values = {
+            'name': '',
+            'players': '',
+            'age': '',
+            'time': '',
+            'interaction': '',
+            'randomness': '',
+            'quantity_min': '',
+            'quantity_max': ''
+        }
+        self.setup_ui()
+        self.load_games()
+
+    def setup_ui(self):
+        # Основной контейнер с отступами
+        main_frame = tk.Frame(self, bg=BG_COLOR)
+        main_frame.pack(fill=tk.BOTH, expand=True, padx=20, pady=20)
+
+        # Левая панель — добавление игры
+        left_panel = tk.Frame(main_frame, bg=CARD_BG, relief=tk.FLAT, bd=0)
+        left_panel.pack(side=tk.LEFT, fill=tk.Y, padx=(0, 20), pady=10)
+
+        # Заголовок формы
+        title_label = tk.Label(left_panel, text="Добавить игру", font=("Segoe UI", 16, "bold"),
+                               bg=CARD_BG, fg=FG_LIGHT)
+        title_label.pack(pady=(15, 20), padx=20, anchor="w")
+
+        # Поля ввода
+        fields_frame = tk.Frame(left_panel, bg=CARD_BG)
+        fields_frame.pack(padx=20, pady=10, fill=tk.X)
+
+        # Название
+        tk.Label(fields_frame, text="НАЗВАНИЕ", font=("Segoe UI", 10, "bold"),
+                 bg=CARD_BG, fg=FG_LIGHT, anchor="w").pack(fill=tk.X, pady=(0, 5))
+        self.name_entry = ttk.Entry(fields_frame, font=("Segoe UI", 11))
+        self.name_entry.pack(fill=tk.X, pady=(0, 15))
+        self.name_entry.insert(0, "Название игры...")
+        self.name_entry.bind("<FocusIn>", lambda e: self.clear_placeholder(self.name_entry, "Название игры..."))
+        self.name_entry.bind("<FocusOut>", lambda e: self.add_placeholder(self.name_entry, "Название игры..."))
+
+        # Игроки
+        tk.Label(fields_frame, text="ИГРОКИ", font=("Segoe UI", 10, "bold"),
+                 bg=CARD_BG, fg=FG_LIGHT).pack(anchor="w", pady=(0, 5))
+        self.players_entry = ttk.Entry(fields_frame, font=("Segoe UI", 11))
+        self.players_entry.pack(fill=tk.X, pady=(0, 15))
+        self.players_entry.insert(0, "2–4")
+        self.players_entry.bind("<FocusIn>", lambda e: self.clear_placeholder(self.players_entry, "2–4"))
+        self.players_entry.bind("<FocusOut>", lambda e: self.add_placeholder(self.players_entry, "2–4"))
+
+        # Возраст
+        tk.Label(fields_frame, text="ВОЗРАСТ", font=("Segoe UI", 10, "bold"),
+                 bg=CARD_BG, fg=FG_LIGHT).pack(anchor="w", pady=(0, 5))
+        self.age_entry = ttk.Entry(fields_frame, font=("Segoe UI", 11))
+        self.age_entry.pack(fill=tk.X, pady=(0, 15))
+        self.age_entry.insert(0, "12+")
+        self.age_entry.bind("<FocusIn>", lambda e: self.clear_placeholder(self.age_entry, "12+"))
+        self.age_entry.bind("<FocusOut>", lambda e: self.add_placeholder(self.age_entry, "12+"))
+
+        # Время партии
+        tk.Label(fields_frame, text="ВРЕМЯ ПАРТИИ (МИН)", font=("Segoe UI", 10, "bold"),
+                 bg=CARD_BG, fg=FG_LIGHT).pack(anchor="w", pady=(0, 5))
+        self.time_entry = ttk.Entry(fields_frame, font=("Segoe UI", 11))
+        self.time_entry.pack(fill=tk.X, pady=(0, 15))
+        self.time_entry.insert(0, "30–60")
+        self.time_entry.bind("<FocusIn>", lambda e: self.clear_placeholder(self.time_entry, "30–60"))
+        self.time_entry.bind("<FocusOut>", lambda e: self.add_placeholder(self.time_entry, "30–60"))
+
+        # Тип взаимодействия
+        tk.Label(fields_frame, text="ТИП ВЗАИМОДЕЙСТВИЯ", font=("Segoe UI", 10, "bold"),
+                 bg=CARD_BG, fg=FG_LIGHT).pack(anchor="w", pady=(0, 5))
+        self.interaction_combo = ttk.Combobox(fields_frame,
+                                              values=["Кооперативная", "Соревновательная", "Командная", "Соло"],
+                                              font=("Segoe UI", 11), state="readonly")
+        self.interaction_combo.pack(fill=tk.X, pady=(0, 15))
+        self.interaction_combo.set("Кооперативная")
+
+        # Случайность
+        tk.Label(fields_frame, text="СЛУЧАЙНОСТЬ", font=("Segoe UI", 10, "bold"),
+                 bg=CARD_BG, fg=FG_LIGHT).pack(anchor="w", pady=(0, 5))
+        self.randomness_combo = ttk.Combobox(fields_frame, values=["Низкий", "Средний", "Высокий"],
+                                             font=("Segoe UI", 11), state="readonly")
+        self.randomness_combo.pack(fill=tk.X, pady=(0, 15))
+        self.randomness_combo.set("Низкий")
+
+        # Количество (спинбокс и чекбокс)
+        quantity_frame = tk.Frame(fields_frame, bg=CARD_BG)
+        quantity_frame.pack(fill=tk.X, pady=(0, 15))
+        tk.Label(quantity_frame, text="КОЛИЧЕСТВО", font=("Segoe UI", 10, "bold"),
+                 bg=CARD_BG, fg=FG_LIGHT).pack(anchor="w", pady=(0, 5))
+        qty_row = tk.Frame(quantity_frame, bg=CARD_BG)
+        qty_row.pack(fill=tk.X)
+        self.quantity_spin = ttk.Spinbox(qty_row, from_=1, to=99, width=5, font=("Segoe UI", 11))
+        self.quantity_spin.pack(side=tk.LEFT, padx=(0, 10))
+        self.available_var = tk.BooleanVar()
+        self.available_check = ttk.Checkbutton(qty_row, text="В наличии", variable=self.available_var,
+                                               style="Accent.TCheckbutton")
+        self.available_check.pack(side=tk.LEFT)
+        self.available_var.set(True)
+
+        # Кнопка добавить
+        add_btn = tk.Button(left_panel, text="+ Добавить", command=self.add_game,
+                            font=("Segoe UI", 12, "bold"), bg=ACCENT, fg="white",
+                            relief=tk.FLAT, padx=20, pady=8, cursor="hand2")
+        add_btn.pack(pady=(20, 30), padx=20, fill=tk.X)
+
+        # Правая панель — каталог
+        right_panel = tk.Frame(main_frame, bg=CARD_BG, relief=tk.FLAT)
+        right_panel.pack(side=tk.RIGHT, fill=tk.BOTH, expand=True, pady=10)
+
+        # Верхняя панель с заголовком и кнопками экспорта/импорта
+        top_bar = tk.Frame(right_panel, bg=CARD_BG)
+        top_bar.pack(fill=tk.X, padx=20, pady=(15, 10))
+
+        catalog_title = tk.Label(top_bar, text="Каталог игр", font=("Segoe UI", 16, "bold"),
+                                 bg=CARD_BG, fg=FG_LIGHT)
+        catalog_title.pack(side=tk.LEFT)
+
+        # Кнопки экспорта и импорта
+        btn_frame = tk.Frame(top_bar, bg=CARD_BG)
+        btn_frame.pack(side=tk.RIGHT)
+
+        export_btn = tk.Button(btn_frame, text="📤 Экспорт в Excel", command=self.export_to_excel,
+                               font=("Segoe UI", 10, "bold"), bg="#4a8c3f", fg="white",
+                               relief=tk.FLAT, padx=12, pady=5, cursor="hand2")
+        export_btn.pack(side=tk.LEFT, padx=(0, 10))
+
+        import_btn = tk.Button(btn_frame, text="📥 Импорт из Excel", command=self.import_from_excel,
+                               font=("Segoe UI", 10, "bold"), bg="#3f6c8c", fg="white",
+                               relief=tk.FLAT, padx=12, pady=5, cursor="hand2")
+        import_btn.pack(side=tk.LEFT)
+
+        # Панель фильтрации
+        filter_frame = tk.Frame(right_panel, bg=FILTER_BG, relief=tk.GROOVE, bd=1)
+        filter_frame.pack(fill=tk.X, padx=20, pady=(5, 10))
+
+        filter_title = tk.Label(filter_frame, text="🔍 Фильтр", font=("Segoe UI", 10, "bold"),
+                                bg=FILTER_BG, fg=FG_LIGHT)
+        filter_title.pack(anchor="w", padx=10, pady=(8, 5))
+
+        # Первая строка фильтров
+        filter_row1 = tk.Frame(filter_frame, bg=FILTER_BG)
+        filter_row1.pack(fill=tk.X, padx=10, pady=5)
+
+        tk.Label(filter_row1, text="Название:", bg=FILTER_BG, fg=FG_LIGHT, font=("Segoe UI", 9)).pack(side=tk.LEFT,
+                                                                                                      padx=(0, 5))
+        self.filter_name = ttk.Entry(filter_row1, width=20)
+        self.filter_name.pack(side=tk.LEFT, padx=(0, 15))
+        self.filter_name.bind("<KeyRelease>", lambda e: self.apply_filter())
+
+        tk.Label(filter_row1, text="Игроки:", bg=FILTER_BG, fg=FG_LIGHT, font=("Segoe UI", 9)).pack(side=tk.LEFT,
+                                                                                                    padx=(0, 5))
+        self.filter_players = ttk.Entry(filter_row1, width=12)
+        self.filter_players.pack(side=tk.LEFT, padx=(0, 15))
+        self.filter_players.bind("<KeyRelease>", lambda e: self.apply_filter())
+
+        tk.Label(filter_row1, text="Возраст:", bg=FILTER_BG, fg=FG_LIGHT, font=("Segoe UI", 9)).pack(side=tk.LEFT,
+                                                                                                     padx=(0, 5))
+        self.filter_age = ttk.Entry(filter_row1, width=8)
+        self.filter_age.pack(side=tk.LEFT, padx=(0, 15))
+        self.filter_age.bind("<KeyRelease>", lambda e: self.apply_filter())
+
+        tk.Label(filter_row1, text="Время:", bg=FILTER_BG, fg=FG_LIGHT, font=("Segoe UI", 9)).pack(side=tk.LEFT,
+                                                                                                   padx=(0, 5))
+        self.filter_time = ttk.Entry(filter_row1, width=12)
+        self.filter_time.pack(side=tk.LEFT, padx=(0, 15))
+        self.filter_time.bind("<KeyRelease>", lambda e: self.apply_filter())
+
+        # Вторая строка фильтров
+        filter_row2 = tk.Frame(filter_frame, bg=FILTER_BG)
+        filter_row2.pack(fill=tk.X, padx=10, pady=(0, 8))
+
+        tk.Label(filter_row2, text="Взаимодействие:", bg=FILTER_BG, fg=FG_LIGHT, font=("Segoe UI", 9)).pack(
+            side=tk.LEFT, padx=(0, 5))
+        self.filter_interaction = ttk.Combobox(filter_row2,
+                                               values=["", "Кооперативная", "Соревновательная", "Командная", "Соло"],
+                                               width=14, state="readonly")
+        self.filter_interaction.pack(side=tk.LEFT, padx=(0, 15))
+        self.filter_interaction.set("")
+        self.filter_interaction.bind("<<ComboboxSelected>>", lambda e: self.apply_filter())
+
+        tk.Label(filter_row2, text="Случайность:", bg=FILTER_BG, fg=FG_LIGHT, font=("Segoe UI", 9)).pack(side=tk.LEFT,
+                                                                                                         padx=(0, 5))
+        self.filter_randomness = ttk.Combobox(filter_row2, values=["", "Низкий", "Средний", "Высокий"],
+                                              width=10, state="readonly")
+        self.filter_randomness.pack(side=tk.LEFT, padx=(0, 15))
+        self.filter_randomness.set("")
+        self.filter_randomness.bind("<<ComboboxSelected>>", lambda e: self.apply_filter())
+
+        tk.Label(filter_row2, text="Кол-во от:", bg=FILTER_BG, fg=FG_LIGHT, font=("Segoe UI", 9)).pack(side=tk.LEFT,
+                                                                                                       padx=(0, 5))
+        self.filter_qty_min = ttk.Spinbox(filter_row2, from_=0, to=99, width=4)
+        self.filter_qty_min.pack(side=tk.LEFT, padx=(0, 5))
+        self.filter_qty_min.bind("<KeyRelease>", lambda e: self.apply_filter())
+
+        tk.Label(filter_row2, text="до:", bg=FILTER_BG, fg=FG_LIGHT, font=("Segoe UI", 9)).pack(side=tk.LEFT,
+                                                                                                padx=(0, 5))
+        self.filter_qty_max = ttk.Spinbox(filter_row2, from_=0, to=99, width=4)
+        self.filter_qty_max.pack(side=tk.LEFT, padx=(0, 15))
+        self.filter_qty_max.bind("<KeyRelease>", lambda e: self.apply_filter())
+
+        # Кнопка сброса фильтра
+        reset_btn = tk.Button(filter_row2, text="✖ Сбросить фильтр", command=self.reset_filter,
+                              font=("Segoe UI", 9), bg="#6a3a9a", fg=FG_LIGHT,
+                              relief=tk.FLAT, padx=10, pady=2, cursor="hand2")
+        reset_btn.pack(side=tk.LEFT, padx=(10, 0))
+
+        # Таблица с прокруткой
+        table_frame = tk.Frame(right_panel, bg=CARD_BG)
+        table_frame.pack(fill=tk.BOTH, expand=True, padx=20, pady=(0, 20))
+
+        scroll_y = ttk.Scrollbar(table_frame, orient=tk.VERTICAL)
+        scroll_x = ttk.Scrollbar(table_frame, orient=tk.HORIZONTAL)
+
+        self.tree = ttk.Treeview(table_frame,
+                                 columns=("name", "players", "age", "time", "interaction", "randomness", "quantity",
+                                          "actions"),
+                                 show="headings", yscrollcommand=scroll_y.set, xscrollcommand=scroll_x.set)
+        scroll_y.config(command=self.tree.yview)
+        scroll_x.config(command=self.tree.xview)
+
+        # Настройка колонок
+        self.tree.heading("name", text="Название")
+        self.tree.heading("players", text="Игроки")
+        self.tree.heading("age", text="Возраст")
+        self.tree.heading("time", text="Время (мин)")
+        self.tree.heading("interaction", text="Взаимодействие")
+        self.tree.heading("randomness", text="Случайность")
+        self.tree.heading("quantity", text="Кол-во")
+        self.tree.heading("actions", text="Действия")
+
+        self.tree.column("name", width=180, minwidth=120)
+        self.tree.column("players", width=80, minwidth=60)
+        self.tree.column("age", width=70, minwidth=60)
+        self.tree.column("time", width=100, minwidth=80)
+        self.tree.column("interaction", width=130, minwidth=100)
+        self.tree.column("randomness", width=90, minwidth=80)
+        self.tree.column("quantity", width=70, minwidth=60)
+        self.tree.column("actions", width=100, anchor="center", stretch=False)
+
+        self.tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        scroll_y.pack(side=tk.RIGHT, fill=tk.Y)
+        scroll_x.pack(side=tk.BOTTOM, fill=tk.X)
+
+        # Словарь для хранения виджетов кнопок
+        self.action_buttons = {}
+        self.current_filtered_ids = []  # Хранит ID отфильтрованных игр
+
+        # Привязка событий для обновления кнопок
+        self.tree.bind("<<TreeviewOpen>>", self.refresh_buttons)
+        self.tree.bind("<<TreeviewClose>>", self.refresh_buttons)
+        self.tree.bind("<Configure>", self.refresh_buttons)
+        scroll_y.config(command=self.on_scroll)
+        scroll_x.config(command=self.on_scroll)
+
+        # Метка для пустой БД
+        self.empty_label = tk.Label(right_panel,
+                                    text="База данных пуста\nИспользуйте форму слева для добавления первой игры",
+                                    font=("Segoe UI", 12, "italic"), bg=CARD_BG, fg=FG_LIGHT,
+                                    justify="center")
+        self.empty_label.place(relx=0.5, rely=0.5, anchor="center")
+        self.empty_label.lower()
+
+        # Сохраняем геометрию при закрытии
+        self.bind("<Configure>", self.on_window_resize)
+
+    def on_window_resize(self, event=None):
+        """Сохраняет размер окна при изменении"""
+        if event.widget == self:
+            self.settings["window_geometry"] = self.geometry()
+            save_settings(self.settings)
+
+    def apply_filter(self):
+        """Применяет фильтр к таблице"""
+        # Собираем значения фильтров
+        name_filter = self.filter_name.get().strip().lower()
+        players_filter = self.filter_players.get().strip().lower()
+        age_filter = self.filter_age.get().strip().lower()
+        time_filter = self.filter_time.get().strip().lower()
+        interaction_filter = self.filter_interaction.get()
+        randomness_filter = self.filter_randomness.get()
+
+        try:
+            qty_min = int(self.filter_qty_min.get()) if self.filter_qty_min.get().strip() else None
+        except ValueError:
+            qty_min = None
+        try:
+            qty_max = int(self.filter_qty_max.get()) if self.filter_qty_max.get().strip() else None
+        except ValueError:
+            qty_max = None
+
+        # Получаем все игры из БД
+        conn = sqlite3.connect(DB_FILE)
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT id, name, players, age, time_minutes, interaction, randomness, quantity FROM games ORDER BY name")
+        all_games = cursor.fetchall()
+        conn.close()
+
+        # Фильтруем
+        filtered = []
+        for game in all_games:
+            game_id, name, players, age, time_str, interaction, randomness, quantity = game
+
+            # Фильтр по названию
+            if name_filter and name_filter not in name.lower():
+                continue
+
+            # Фильтр по игрокам
+            if players_filter and players_filter not in players.lower():
+                continue
+
+            # Фильтр по возрасту
+            if age_filter and age_filter not in age.lower():
+                continue
+
+            # Фильтр по времени
+            if time_filter and time_filter not in time_str.lower():
+                continue
+
+            # Фильтр по взаимодействию
+            if interaction_filter and interaction != interaction_filter:
+                continue
+
+            # Фильтр по случайности
+            if randomness_filter and randomness != randomness_filter:
+                continue
+
+            # Фильтр по количеству
+            if qty_min is not None and quantity < qty_min:
+                continue
+            if qty_max is not None and quantity > qty_max:
+                continue
+
+            filtered.append(game)
+
+        self.current_filtered_ids = [g[0] for g in filtered]
+
+        # Обновляем таблицу
+        for row in self.tree.get_children():
+            self.tree.delete(row)
+
+        if filtered:
+            self.empty_label.place_forget()
+            for game in filtered:
+                game_id, name, players, age, time_str, interaction, randomness, quantity = game
+                self.tree.insert("", tk.END, iid=game_id,
+                                 values=(name, players, age, time_str, interaction, randomness, quantity, ""))
+        else:
+            # Показываем сообщение о пустом результате фильтрации
+            self.empty_label.config(text="Нет игр, соответствующих фильтру\nИзмените условия фильтрации")
+            self.empty_label.place(relx=0.5, rely=0.5, anchor="center")
+
+        # Обновляем кнопки
+        self.after(100, self.refresh_buttons)
+
+    def reset_filter(self):
+        """Сбрасывает все фильтры"""
+        self.filter_name.delete(0, tk.END)
+        self.filter_players.delete(0, tk.END)
+        self.filter_age.delete(0, tk.END)
+        self.filter_time.delete(0, tk.END)
+        self.filter_interaction.set("")
+        self.filter_randomness.set("")
+        self.filter_qty_min.delete(0, tk.END)
+        self.filter_qty_max.delete(0, tk.END)
+        self.apply_filter()
+        self.empty_label.config(text="База данных пуста\nИспользуйте форму слева для добавления первой игры")
+
+    def on_scroll(self, *args):
+        """Обработка прокрутки для синхронизации кнопок"""
+        if args[0] == 'moveto':
+            self.tree.yview(*args)
+        else:
+            self.tree.yview_scroll(args[1], args[0])
+        self.refresh_buttons()
+
+    def refresh_buttons(self, event=None):
+        """Обновляет позиции кнопок-смайликов для всех видимых строк"""
+        # Удаляем старые кнопки
+        for btn_dict in self.action_buttons.values():
+            for btn in btn_dict.values():
+                if isinstance(btn, (tk.Button, tk.Frame)):
+                    try:
+                        btn.destroy()
+                    except:
+                        pass
+        self.action_buttons.clear()
+
+        # Для каждого элемента в tree создаём кнопки, если строка видима
+        for item in self.tree.get_children():
+            bbox = self.tree.bbox(item)
+            if bbox:
+                col_bbox = self.tree.bbox(item, column="#8")
+                if col_bbox:
+                    x, y, width, height = col_bbox
+                    btn_frame = tk.Frame(self.tree, bg=CARD_BG)
+                    btn_frame.place(x=x + 5, y=y + 2, width=width - 10, height=height - 4)
+
+                    edit_btn = tk.Button(btn_frame, text="✏️", font=("Segoe UI", 10),
+                                         bg=CARD_BG, fg=FG_LIGHT, bd=1, relief=tk.SOLID,
+                                         highlightbackground=BUTTON_BORDER, highlightcolor=BUTTON_BORDER,
+                                         highlightthickness=1, cursor="hand2",
+                                         command=lambda i=item: self.edit_game(i))
+                    edit_btn.pack(side=tk.LEFT, padx=2, expand=True, fill=tk.BOTH)
+
+                    del_btn = tk.Button(btn_frame, text="🗑️", font=("Segoe UI", 10),
+                                        bg=CARD_BG, fg=FG_LIGHT, bd=1, relief=tk.SOLID,
+                                        highlightbackground=BUTTON_BORDER, highlightcolor=BUTTON_BORDER,
+                                        highlightthickness=1, cursor="hand2",
+                                        command=lambda i=item: self.delete_game(i))
+                    del_btn.pack(side=tk.LEFT, padx=2, expand=True, fill=tk.BOTH)
+
+                    self.action_buttons[item] = {"frame": btn_frame, "edit": edit_btn, "delete": del_btn}
+
+    def export_to_excel(self):
+        """Экспорт отфильтрованных игр в Excel файл с выбором пути"""
+        # Собираем данные из отображаемых строк
+        games_data = []
+        for item in self.tree.get_children():
+            values = self.tree.item(item, "values")
+            if values and len(values) >= 7:
+                games_data.append({
+                    'Название': values[0],
+                    'Игроки': values[1],
+                    'Возраст': values[2],
+                    'Время (мин)': values[3],
+                    'Взаимодействие': values[4],
+                    'Случайность': values[5],
+                    'Количество': values[6]
+                })
+
+        if not games_data:
+            messagebox.showwarning("Экспорт", "Нет данных для экспорта")
+            return
+
+        # Предлагаем выбрать путь для сохранения
+        initial_dir = self.settings.get("last_export_path", str(Path.home() / "Desktop"))
+        initial_file = f"board_games_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
+
+        filename = filedialog.asksaveasfilename(
+            defaultextension=".xlsx",
+            filetypes=[("Excel files", "*.xlsx"), ("All files", "*.*")],
+            initialdir=initial_dir,
+            initialfile=initial_file,
+            title="Сохранить Excel файл"
+        )
+
+        if filename:
+            try:
+                df = pd.DataFrame(games_data)
+                df.to_excel(filename, index=False, sheet_name="Настольные игры")
+
+                # Сохраняем путь для будущих экспортов
+                self.settings["last_export_path"] = str(Path(filename).parent)
+                save_settings(self.settings)
+
+                messagebox.showinfo("Экспорт", f"Успешно экспортировано {len(games_data)} игр в файл:\n{filename}")
+            except Exception as e:
+                messagebox.showerror("Ошибка экспорта", f"Не удалось сохранить файл:\n{str(e)}")
+
+    def import_from_excel(self):
+        """Импорт игр из Excel файла с выбором пути"""
+        initial_dir = self.settings.get("last_import_path", str(Path.home() / "Desktop"))
+
+        filename = filedialog.askopenfilename(
+            filetypes=[("Excel files", "*.xlsx *.xls"), ("All files", "*.*")],
+            initialdir=initial_dir,
+            title="Выберите Excel файл для импорта"
+        )
+
+        if not filename:
+            return
+
+        # Сохраняем путь для будущих импортов
+        self.settings["last_import_path"] = str(Path(filename).parent)
+        save_settings(self.settings)
+
+        try:
+            df = pd.read_excel(filename)
+
+            column_mapping = {
+                'name': 'name', 'название': 'name',
+                'players': 'players', 'игроки': 'players',
+                'age': 'age', 'возраст': 'age',
+                'time_minutes': 'time_minutes', 'время': 'time_minutes', 'время партии': 'time_minutes',
+                'interaction': 'interaction', 'взаимодействие': 'interaction', 'тип взаимодействия': 'interaction',
+                'randomness': 'randomness', 'случайность': 'randomness',
+                'quantity': 'quantity', 'количество': 'quantity', 'кол-во': 'quantity'
+            }
+
+            rename_dict = {}
+            for col in df.columns:
+                col_lower = col.lower().strip()
+                if col_lower in column_mapping:
+                    rename_dict[col] = column_mapping[col_lower]
+
+            if rename_dict:
+                df = df.rename(columns=rename_dict)
+
+            expected_columns = ['name', 'players', 'age', 'time_minutes', 'interaction', 'randomness', 'quantity']
+            missing_cols = [col for col in expected_columns if col not in df.columns]
+            if missing_cols:
+                messagebox.showerror("Ошибка импорта",
+                                     f"Файл не содержит необходимых колонок:\n{', '.join(missing_cols)}")
+                return
+
+            df = df[expected_columns].copy()
+            df['quantity'] = pd.to_numeric(df['quantity'], errors='coerce').fillna(1).astype(int)
+            df['name'] = df['name'].fillna('').astype(str)
+            df['players'] = df['players'].fillna('').astype(str)
+            df['age'] = df['age'].fillna('').astype(str)
+            df['time_minutes'] = df['time_minutes'].fillna('').astype(str)
+            df['interaction'] = df['interaction'].fillna('Кооперативная').astype(str)
+            df['randomness'] = df['randomness'].fillna('Низкий').astype(str)
+
+            df = df[df['name'].str.strip() != '']
+
+            if df.empty:
+                messagebox.showwarning("Импорт", "Файл не содержит корректных данных для импорта")
+                return
+
+            if not messagebox.askyesno("Импорт", f"Найдено {len(df)} игр для импорта.\n\n"
+                                                 f"Будут добавлены только новые игры (дубликаты по названию будут пропущены).\n\n"
+                                                 f"Продолжить?"):
+                return
+
+            conn = sqlite3.connect(DB_FILE)
+            cursor = conn.cursor()
+
+            existing = set(row[0] for row in cursor.execute("SELECT name FROM games").fetchall())
+
+            added = 0
+            skipped = 0
+
+            for _, row in df.iterrows():
+                name = row['name'].strip()
+                if name in existing:
+                    skipped += 1
+                    continue
+
+                cursor.execute('''
+                    INSERT INTO games (name, players, age, time_minutes, interaction, randomness, quantity)
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                ''', (name, row['players'], row['age'], row['time_minutes'],
+                      row['interaction'], row['randomness'], row['quantity']))
+                added += 1
+                existing.add(name)
+
+            conn.commit()
+            conn.close()
+
+            if added > 0:
+                self.load_games()
+                messagebox.showinfo("Импорт", f"Успешно импортировано {added} игр.\nПропущено дубликатов: {skipped}")
+            else:
+                messagebox.showinfo("Импорт", f"Новых игр не добавлено. Все {skipped} игр уже существуют в базе.")
+
+        except Exception as e:
+            messagebox.showerror("Ошибка импорта", f"Не удалось прочитать файл:\n{str(e)}")
+
+    def edit_game(self, item):
+        """Редактирование выбранной игры"""
+        values = self.tree.item(item, "values")
+        if not values:
+            return
+
+        old_name, players, age, time_str, interaction, randomness, quantity = values[:7]
+
+        dialog = tk.Toplevel(self)
+        dialog.title("Редактировать игру")
+        dialog.configure(bg=CARD_BG)
+        dialog.geometry("400x520")
+        dialog.resizable(False, False)
+        dialog.transient(self)
+        dialog.grab_set()
+
+        tk.Label(dialog, text="Название", font=("Segoe UI", 10, "bold"),
+                 bg=CARD_BG, fg=FG_LIGHT).pack(anchor="w", padx=20, pady=(15, 5))
+        name_entry = ttk.Entry(dialog, font=("Segoe UI", 11), width=40)
+        name_entry.pack(padx=20, pady=(0, 10), fill=tk.X)
+        name_entry.insert(0, old_name)
+
+        tk.Label(dialog, text="Игроки", font=("Segoe UI", 10, "bold"),
+                 bg=CARD_BG, fg=FG_LIGHT).pack(anchor="w", padx=20, pady=(5, 5))
+        players_entry = ttk.Entry(dialog, font=("Segoe UI", 11))
+        players_entry.pack(padx=20, pady=(0, 10), fill=tk.X)
+        players_entry.insert(0, players)
+
+        tk.Label(dialog, text="Возраст", font=("Segoe UI", 10, "bold"),
+                 bg=CARD_BG, fg=FG_LIGHT).pack(anchor="w", padx=20, pady=(5, 5))
+        age_entry = ttk.Entry(dialog, font=("Segoe UI", 11))
+        age_entry.pack(padx=20, pady=(0, 10), fill=tk.X)
+        age_entry.insert(0, age)
+
+        tk.Label(dialog, text="Время партии (мин)", font=("Segoe UI", 10, "bold"),
+                 bg=CARD_BG, fg=FG_LIGHT).pack(anchor="w", padx=20, pady=(5, 5))
+        time_entry = ttk.Entry(dialog, font=("Segoe UI", 11))
+        time_entry.pack(padx=20, pady=(0, 10), fill=tk.X)
+        time_entry.insert(0, time_str)
+
+        tk.Label(dialog, text="Тип взаимодействия", font=("Segoe UI", 10, "bold"),
+                 bg=CARD_BG, fg=FG_LIGHT).pack(anchor="w", padx=20, pady=(5, 5))
+        interaction_combo = ttk.Combobox(dialog, values=["Кооперативная", "Соревновательная", "Командная", "Соло"],
+                                         font=("Segoe UI", 11), state="readonly")
+        interaction_combo.pack(padx=20, pady=(0, 10), fill=tk.X)
+        interaction_combo.set(interaction)
+
+        tk.Label(dialog, text="Случайность", font=("Segoe UI", 10, "bold"),
+                 bg=CARD_BG, fg=FG_LIGHT).pack(anchor="w", padx=20, pady=(5, 5))
+        randomness_combo = ttk.Combobox(dialog, values=["Низкий", "Средний", "Высокий"],
+                                        font=("Segoe UI", 11), state="readonly")
+        randomness_combo.pack(padx=20, pady=(0, 10), fill=tk.X)
+        randomness_combo.set(randomness)
+
+        tk.Label(dialog, text="Количество", font=("Segoe UI", 10, "bold"),
+                 bg=CARD_BG, fg=FG_LIGHT).pack(anchor="w", padx=20, pady=(5, 5))
+        quantity_spin = ttk.Spinbox(dialog, from_=0, to=99, width=10, font=("Segoe UI", 11))
+        quantity_spin.pack(padx=20, pady=(0, 20), anchor="w")
+        quantity_spin.delete(0, tk.END)
+        quantity_spin.insert(0, quantity)
+
+        def save_changes():
+            new_name = name_entry.get().strip()
+            if not new_name:
+                messagebox.showwarning("Ошибка", "Название не может быть пустым")
+                return
+            try:
+                new_quantity = int(quantity_spin.get())
+            except ValueError:
+                new_quantity = 0
+
+            conn = sqlite3.connect(DB_FILE)
+            cursor = conn.cursor()
+            cursor.execute('''
+                UPDATE games 
+                SET name=?, players=?, age=?, time_minutes=?, interaction=?, randomness=?, quantity=?
+                WHERE id=?
+            ''', (new_name, players_entry.get(), age_entry.get(), time_entry.get(),
+                  interaction_combo.get(), randomness_combo.get(), new_quantity, item))
+            conn.commit()
+            conn.close()
+            dialog.destroy()
+            self.apply_filter()
+            messagebox.showinfo("Успех", f"Игра '{new_name}' обновлена!")
+
+        btn_frame = tk.Frame(dialog, bg=CARD_BG)
+        btn_frame.pack(pady=20)
+        tk.Button(btn_frame, text="Сохранить", command=save_changes,
+                  bg=ACCENT, fg="white", font=("Segoe UI", 11, "bold"),
+                  padx=20, pady=5, cursor="hand2").pack(side=tk.LEFT, padx=10)
+        tk.Button(btn_frame, text="Отмена", command=dialog.destroy,
+                  bg="#555", fg="white", font=("Segoe UI", 11),
+                  padx=20, pady=5, cursor="hand2").pack(side=tk.LEFT)
+
+    def delete_game(self, item):
+        """Удаление игры"""
+        values = self.tree.item(item, "values")
+        game_name = values[0] if values else "игру"
+        if messagebox.askyesno("Подтверждение", f"Удалить игру '{game_name}'?"):
+            conn = sqlite3.connect(DB_FILE)
+            cursor = conn.cursor()
+            cursor.execute("DELETE FROM games WHERE id = ?", (item,))
+            conn.commit()
+            conn.close()
+            self.apply_filter()
+            messagebox.showinfo("Удалено", f"Игра '{game_name}' удалена.")
+
+    def clear_placeholder(self, entry, placeholder):
+        if entry.get() == placeholder:
+            entry.delete(0, tk.END)
+            entry.config(foreground="black")
+
+    def add_placeholder(self, entry, placeholder):
+        if entry.get() == "":
+            entry.insert(0, placeholder)
+            entry.config(foreground="gray")
+        else:
+            entry.config(foreground="black")
+
+    def add_game(self):
+        name = self.name_entry.get().strip()
+        if not name or name == "Название игры...":
+            messagebox.showwarning("Ошибка", "Введите название игры")
+            return
+
+        players = self.players_entry.get().strip()
+        age = self.age_entry.get().strip()
+        time_str = self.time_entry.get().strip()
+        interaction = self.interaction_combo.get()
+        randomness = self.randomness_combo.get()
+        quantity = int(self.quantity_spin.get()) if self.available_var.get() else 0
+
+        conn = sqlite3.connect(DB_FILE)
+        cursor = conn.cursor()
+        cursor.execute('''
+            INSERT INTO games (name, players, age, time_minutes, interaction, randomness, quantity)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+        ''', (name, players, age, time_str, interaction, randomness, quantity))
+        conn.commit()
+        conn.close()
+
+        # Очистка формы
+        self.name_entry.delete(0, tk.END)
+        self.add_placeholder(self.name_entry, "Название игры...")
+        self.players_entry.delete(0, tk.END)
+        self.add_placeholder(self.players_entry, "2–4")
+        self.age_entry.delete(0, tk.END)
+        self.add_placeholder(self.age_entry, "12+")
+        self.time_entry.delete(0, tk.END)
+        self.add_placeholder(self.time_entry, "30–60")
+        self.interaction_combo.set("Кооперативная")
+        self.randomness_combo.set("Низкий")
+        self.quantity_spin.delete(0, tk.END)
+        self.quantity_spin.insert(0, "1")
+        self.available_var.set(True)
+
+        self.apply_filter()
+        messagebox.showinfo("Успех", f"Игра '{name}' добавлена!")
+
+    def load_games(self):
+        """Загружает все игры и применяет текущий фильтр"""
+        self.apply_filter()
+
+
+if __name__ == "__main__":
+    app = BoardGamesApp()
+    # Стиль для Checkbutton
+    style = ttk.Style()
+    style.configure("Accent.TCheckbutton", background=CARD_BG, foreground=FG_LIGHT)
+    # Настройка Treeview
+    style.configure("Treeview", background=CARD_BG, fieldbackground=CARD_BG, foreground=FG_LIGHT, rowheight=32)
+    style.configure("Treeview.Heading", background="#4a2a8a", foreground=FG_LIGHT, font=("Segoe UI", 10, "bold"))
+    style.map("Treeview", background=[('selected', ACCENT)])
+    app.mainloop()
