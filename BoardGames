@@ -7,6 +7,7 @@ from datetime import datetime
 import os
 import json
 import sys
+import re
 
 # Цветовая схема
 BG_COLOR = "#2b1055"  # Фиолетовый фон
@@ -16,6 +17,8 @@ ACCENT = "#b47cff"  # Акцентный цвет
 ENTRY_BG = "#f7f3ff"  # Фон полей ввода
 BUTTON_BORDER = "#d4b8ff"  # Обводка для кнопок-смайликов
 FILTER_BG = "#4a2a8a"  # Фон панели фильтра
+ERROR_BG = "#ff6b6b"  # Цвет фона для ошибок
+ERROR_FG = "#ffffff"  # Цвет текста ошибки
 
 # Название приложения (для папки в AppData)
 APP_NAME = "BoardGames"
@@ -127,6 +130,52 @@ class BoardGamesApp(tk.Tk):
         self.setup_ui()
         self.load_games()
 
+    def validate_all_fields(self, name, players, age, time_m, qty):
+        """Проверяет данные и возвращает (True, "") или (False, "Сообщение об ошибке")"""
+        if not name or name.strip() == "": return False, "Название не может быть пустым"
+
+        # Регулярки для проверки: только цифры, дефис или плюс, никакого минуса в начале
+        if not re.match(r'^\d+[\d\-]*$', players.strip()):
+            return False, "Поле 'Игроки' должно содержать только положительные числа или формат 2-4"
+        if not re.match(r'^\d+\+?$', age.strip()):
+            return False, "Поле 'Возраст' должно быть числом (например, 12+)"
+        if not re.match(r'^\d+[\d\-]*$', time_m.strip()):
+            return False, "Поле 'Время' должно быть числом или диапазоном (например, 30-60)"
+        if not qty.isdigit() or int(qty) < 0:
+            return False, "Количество должно быть положительным числом"
+
+        return True, ""
+
+    def validate_all_fields(self):
+        """Проверяет корректность всех полей ввода"""
+        # Проверка игроков (только цифры и дефис, не может начинаться с минуса)
+        players = self.players_entry.get().strip()
+        if not re.match(r'^\d+[\d\-]*$', players):
+            return False, "Поле 'Игроки' должно быть числом или диапазоном (например, 2-4)"
+
+        # Проверка возраста (цифры и возможный плюс, без минусов)
+        age = self.age_entry.get().strip()
+        if not re.match(r'^\d+\+?$', age):
+            return False, "Поле 'Возраст' должно быть числом (например, 12+)"
+
+        # Проверка времени (только цифры и дефис)
+        time = self.time_entry.get().strip()
+        if not re.match(r'^\d+[\d\-]*$', time):
+            return False, "Поле 'Время' должно быть числом или диапазоном (например, 30-60)"
+
+        return True, ""
+
+    def is_valid_input(self, value, field_type):
+        """Проверка: не пусто, без минусов, только цифры/диапазоны."""
+        val = value.strip()
+        if not val or val == "" or val in ["Название игры...", "2–4", "12+", "30–60"]:
+            return False
+        if field_type == "int":  # Для количества
+            return val.isdigit() and int(val) >= 0
+        if field_type == "range":  # Для игроков/времени (цифры + дефис)
+            return bool(re.match(r'^\d+[\d\-]*$', val))
+        return True
+
     def setup_ui(self):
         # Основной контейнер с отступами
         main_frame = tk.Frame(self, bg=BG_COLOR)
@@ -205,11 +254,31 @@ class BoardGamesApp(tk.Tk):
                  bg=CARD_BG, fg=FG_LIGHT).pack(anchor="w", pady=(0, 5))
         qty_row = tk.Frame(quantity_frame, bg=CARD_BG)
         qty_row.pack(fill=tk.X)
-        self.quantity_spin = ttk.Spinbox(qty_row, from_=1, to=99, width=5, font=("Segoe UI", 11))
+
+        # Функция валидации для Spinbox - разрешаем только цифры
+        def validate_quantity_input(P):
+            """Строгая проверка: только целые неотрицательные числа 0-999"""
+            if P == "":
+                return True
+            # Полностью блокируем минус, точку, запятую, буквы и т.д.
+            if P.isdigit():
+                num = int(P)
+                return 0 <= num <= 999
+            return False
+
+        vcmd = (self.register(validate_quantity_input), '%P')
+
+        self.quantity_spin = ttk.Spinbox(qty_row, from_=0, to=999, width=5, font=("Segoe UI", 11),
+                                         validate='key', validatecommand=vcmd)
         self.quantity_spin.pack(side=tk.LEFT, padx=(0, 10))
+
+        # Привязываем событие потери фокуса для очистки некорректного ввода
+        self.quantity_spin.bind("<FocusOut>", self.validate_quantity_focus)
+
         self.available_var = tk.BooleanVar()
         self.available_check = ttk.Checkbutton(qty_row, text="В наличии", variable=self.available_var,
-                                               style="Accent.TCheckbutton")
+                                               style="Accent.TCheckbutton",
+                                               command=self.on_available_change)
         self.available_check.pack(side=tk.LEFT)
         self.available_var.set(True)
 
@@ -379,6 +448,67 @@ class BoardGamesApp(tk.Tk):
         # Сохраняем геометрию при закрытии
         self.bind("<Configure>", self.on_window_resize)
 
+    def on_available_change(self):
+        """Обработчик изменения состояния чекбокса 'В наличии'"""
+        if not self.available_var.get():
+            self.quantity_spin.delete(0, tk.END)
+            self.quantity_spin.insert(0, "0")
+        else:
+            current_val = self.quantity_spin.get()
+            if current_val == "0" or current_val == "":
+                self.quantity_spin.delete(0, tk.END)
+                self.quantity_spin.insert(0, "1")
+
+    def validate_quantity_focus(self, event=None):
+        """Проверяет значение в поле количества при потере фокуса"""
+        value = self.quantity_spin.get().strip()
+
+        # Если поле пустое
+        if value == "":
+            self.quantity_spin.delete(0, tk.END)
+            self.quantity_spin.insert(0, "1" if self.available_var.get() else "0")
+            return
+
+        # Проверяем, что значение состоит только из цифр
+        if not value.isdigit():
+            self.quantity_spin.delete(0, tk.END)
+            self.quantity_spin.insert(0, "1" if self.available_var.get() else "0")
+            messagebox.showwarning("Ошибка ввода",
+                                   "Количество должно быть целым неотрицательным числом (0-999).")
+            return
+
+        try:
+            num = int(value)
+            # Проверяем диапазон
+            if num < 0:
+                self.quantity_spin.delete(0, tk.END)
+                self.quantity_spin.insert(0, "0")
+                messagebox.showwarning("Некорректное значение",
+                                       "Количество не может быть отрицательным. Установлено значение 0.")
+            elif num > 999:
+                self.quantity_spin.delete(0, tk.END)
+                self.quantity_spin.insert(0, "999")
+                messagebox.showwarning("Некорректное значение",
+                                       "Количество не может превышать 999. Установлено максимальное значение.")
+            else:
+                # Если игра в наличии, проверяем что количество не 0
+                if self.available_var.get() and num == 0:
+                    self.quantity_spin.delete(0, tk.END)
+                    self.quantity_spin.insert(0, "1")
+                    messagebox.showwarning("Некорректное значение",
+                                           "Если игра в наличии, количество должно быть не менее 1. Установлено значение 1.")
+                # Если игра не в наличии, проверяем что количество равно 0
+                elif not self.available_var.get() and num != 0:
+                    self.quantity_spin.delete(0, tk.END)
+                    self.quantity_spin.insert(0, "0")
+                    messagebox.showwarning("Некорректное значение",
+                                           "Если игра не в наличии, количество должно быть 0. Установлено значение 0.")
+        except ValueError:
+            self.quantity_spin.delete(0, tk.END)
+            self.quantity_spin.insert(0, "1" if self.available_var.get() else "0")
+            messagebox.showwarning("Некорректное значение",
+                                   "Введите целое положительное число. Установлено значение по умолчанию.")
+
     def on_window_resize(self, event=None):
         """Сохраняет размер окна при изменении"""
         if event.widget == self:
@@ -397,10 +527,14 @@ class BoardGamesApp(tk.Tk):
 
         try:
             qty_min = int(self.filter_qty_min.get()) if self.filter_qty_min.get().strip() else None
+            if qty_min is not None and qty_min < 0:
+                qty_min = 0
         except ValueError:
             qty_min = None
         try:
             qty_max = int(self.filter_qty_max.get()) if self.filter_qty_max.get().strip() else None
+            if qty_max is not None and qty_max < 0:
+                qty_max = 0
         except ValueError:
             qty_max = None
 
@@ -528,6 +662,46 @@ class BoardGamesApp(tk.Tk):
 
                     self.action_buttons[item] = {"frame": btn_frame, "edit": edit_btn, "delete": del_btn}
 
+    def validate_name(self, name):
+        if not name or name.strip() == "" or name.strip() == "Название игры...":
+            return False, "Название игры не может быть пустым"
+        return True, ""
+
+    def validate_players(self, players):
+        # Разрешаем только цифры и дефис, запрещаем минус в начале
+        if not re.match(r'^\d+[\d\-]*$', players.strip()):
+            return False, "Поле 'Игроки' должно быть числом или диапазоном (напр. 2-4)"
+        return True, ""
+
+    def validate_age(self, age):
+        # Только цифры и возможный плюс в конце
+        if not re.match(r'^\d+\+?$', age.strip()):
+            return False, "Поле 'Возраст' должно быть числом (напр. 12+)"
+        return True, ""
+
+    def validate_time(self, time_str):
+        if not re.match(r'^\d+[\d\-]*$', time_str.strip()):
+            return False, "Поле 'Время' должно быть числом или диапазоном (напр. 30-60)"
+        return True, ""
+
+    def validate_quantity(self, quantity, is_available):
+        """Проверка количества"""
+        if quantity < 0:
+            return False, "Количество не может быть отрицательным"
+        if quantity > 999:
+            return False, "Количество не может превышать 999"
+        if is_available:
+            if quantity < 1:
+                return False, "Если игра в наличии, количество должно быть не менее 1"
+        else:
+            if quantity != 0:
+                return False, "Если игра не в наличии, количество должно быть 0"
+        return True, ""
+
+    def show_field_error(self, field_name, error_message):
+        """Показывает ошибку для конкретного поля"""
+        messagebox.showerror(f"Ошибка в поле '{field_name}'", error_message)
+
     def export_to_excel(self):
         """Экспорт отфильтрованных игр в Excel файл с выбором пути"""
         # Собираем данные из отображаемых строк
@@ -575,106 +749,44 @@ class BoardGamesApp(tk.Tk):
                 messagebox.showerror("Ошибка экспорта", f"Не удалось сохранить файл:\n{str(e)}")
 
     def import_from_excel(self):
-        """Импорт игр из Excel файла с выбором пути"""
-        initial_dir = self.settings.get("last_import_path", str(Path.home() / "Desktop"))
-
-        filename = filedialog.askopenfilename(
-            filetypes=[("Excel files", "*.xlsx *.xls"), ("All files", "*.*")],
-            initialdir=initial_dir,
-            title="Выберите Excel файл для импорта"
-        )
-
-        if not filename:
-            return
-
-        # Сохраняем путь для будущих импортов
-        self.settings["last_import_path"] = str(Path(filename).parent)
-        save_settings(self.settings)
+        filename = filedialog.askopenfilename(filetypes=[("Excel files", "*.xlsx")])
+        if not filename: return
 
         try:
+            # Читаем файл
             df = pd.read_excel(filename)
 
-            column_mapping = {
-                'name': 'name', 'название': 'name',
-                'players': 'players', 'игроки': 'players',
-                'age': 'age', 'возраст': 'age',
-                'time_minutes': 'time_minutes', 'время': 'time_minutes', 'время партии': 'time_minutes',
-                'interaction': 'interaction', 'взаимодействие': 'interaction', 'тип взаимодействия': 'interaction',
-                'randomness': 'randomness', 'случайность': 'randomness',
-                'quantity': 'quantity', 'количество': 'quantity', 'кол-во': 'quantity'
-            }
-
-            rename_dict = {}
-            for col in df.columns:
-                col_lower = col.lower().strip()
-                if col_lower in column_mapping:
-                    rename_dict[col] = column_mapping[col_lower]
-
-            if rename_dict:
-                df = df.rename(columns=rename_dict)
-
-            expected_columns = ['name', 'players', 'age', 'time_minutes', 'interaction', 'randomness', 'quantity']
-            missing_cols = [col for col in expected_columns if col not in df.columns]
-            if missing_cols:
-                messagebox.showerror("Ошибка импорта",
-                                     f"Файл не содержит необходимых колонок:\n{', '.join(missing_cols)}")
-                return
-
-            df = df[expected_columns].copy()
-            df['quantity'] = pd.to_numeric(df['quantity'], errors='coerce').fillna(1).astype(int)
-            df['name'] = df['name'].fillna('').astype(str)
-            df['players'] = df['players'].fillna('').astype(str)
-            df['age'] = df['age'].fillna('').astype(str)
-            df['time_minutes'] = df['time_minutes'].fillna('').astype(str)
-            df['interaction'] = df['interaction'].fillna('Кооперативная').astype(str)
-            df['randomness'] = df['randomness'].fillna('Низкий').astype(str)
-
-            df = df[df['name'].str.strip() != '']
-
-            if df.empty:
-                messagebox.showwarning("Импорт", "Файл не содержит корректных данных для импорта")
-                return
-
-            if not messagebox.askyesno("Импорт", f"Найдено {len(df)} игр для импорта.\n\n"
-                                                 f"Будут добавлены только новые игры (дубликаты по названию будут пропущены).\n\n"
-                                                 f"Продолжить?"):
-                return
+            # Отладочное сообщение (поможет понять, сколько колонок видит программа)
+            print(f"Колонок найдено: {len(df.columns)}")
+            print(f"Названия колонок: {list(df.columns)}")
 
             conn = sqlite3.connect(DB_FILE)
             cursor = conn.cursor()
 
-            existing = set(row[0] for row in cursor.execute("SELECT name FROM games").fetchall())
+            for index, row in df.iterrows():
+                # Превращаем строку в список, чтобы безопасно достать данные
+                data = row.tolist()
 
-            added = 0
-            skipped = 0
+                # Проверка: есть ли у нас хотя бы 7 элементов в строке
+                if len(data) < 7:
+                    raise ValueError(f"В строке {index + 2} недостаточно данных (всего {len(data)})")
 
-            for _, row in df.iterrows():
-                name = row['name'].strip()
-                if name in existing:
-                    skipped += 1
-                    continue
-
-                cursor.execute('''
-                    INSERT INTO games (name, players, age, time_minutes, interaction, randomness, quantity)
-                    VALUES (?, ?, ?, ?, ?, ?, ?)
-                ''', (name, row['players'], row['age'], row['time_minutes'],
-                      row['interaction'], row['randomness'], row['quantity']))
-                added += 1
-                existing.add(name)
+                cursor.execute('''INSERT INTO games 
+                                 (name, players, age, time_minutes, interaction, randomness, quantity) 
+                                 VALUES (?, ?, ?, ?, ?, ?, ?)''',
+                               (str(data[0]), str(data[1]), str(data[2]), str(data[3]),
+                                str(data[4]), str(data[5]), int(data[6])))
 
             conn.commit()
             conn.close()
-
-            if added > 0:
-                self.load_games()
-                messagebox.showinfo("Импорт", f"Успешно импортировано {added} игр.\nПропущено дубликатов: {skipped}")
-            else:
-                messagebox.showinfo("Импорт", f"Новых игр не добавлено. Все {skipped} игр уже существуют в базе.")
+            self.load_games()
+            messagebox.showinfo("Успех", "Игры успешно импортированы!")
 
         except Exception as e:
-            messagebox.showerror("Ошибка импорта", f"Не удалось прочитать файл:\n{str(e)}")
-
+            # Теперь сообщение об ошибке покажет реальную причину
+            messagebox.showerror("Ошибка импорта", f"Детали ошибки: {str(e)}")
     def edit_game(self, item):
+
         """Редактирование выбранной игры"""
         values = self.tree.item(item, "values")
         if not values:
@@ -685,7 +797,7 @@ class BoardGamesApp(tk.Tk):
         dialog = tk.Toplevel(self)
         dialog.title("Редактировать игру")
         dialog.configure(bg=CARD_BG)
-        dialog.geometry("400x520")
+        dialog.geometry("420x650")
         dialog.resizable(False, False)
         dialog.transient(self)
         dialog.grab_set()
@@ -730,20 +842,142 @@ class BoardGamesApp(tk.Tk):
 
         tk.Label(dialog, text="Количество", font=("Segoe UI", 10, "bold"),
                  bg=CARD_BG, fg=FG_LIGHT).pack(anchor="w", padx=20, pady=(5, 5))
-        quantity_spin = ttk.Spinbox(dialog, from_=0, to=99, width=10, font=("Segoe UI", 11))
-        quantity_spin.pack(padx=20, pady=(0, 20), anchor="w")
+
+        quantity_frame_inner = tk.Frame(dialog, bg=CARD_BG)
+        quantity_frame_inner.pack(padx=20, pady=(0, 20), anchor="w", fill=tk.X)
+
+        # Функция валидации для редактирования - только цифры
+        def validate_quantity_edit(P):
+            """Строгая проверка: только целые неотрицательные числа"""
+            if P == "":
+                return True
+            if P.isdigit():
+                num = int(P)
+                return 0 <= num <= 999
+            return False
+
+        vcmd_edit = (dialog.register(validate_quantity_edit), '%P')
+
+        quantity_spin = ttk.Spinbox(quantity_frame_inner, from_=0, to=999, width=10, font=("Segoe UI", 11),
+                                    validate='key', validatecommand=vcmd_edit)
+        quantity_spin.pack(side=tk.LEFT, padx=(0, 10))
+        available_var_inner = tk.BooleanVar()
+        available_check = ttk.Checkbutton(quantity_frame_inner, text="В наличии", variable=available_var_inner,
+                                          style="Accent.TCheckbutton")
+        available_check.pack(side=tk.LEFT)
+
         quantity_spin.delete(0, tk.END)
         quantity_spin.insert(0, quantity)
+        available_var_inner.set(int(quantity) > 0)
+
+        # Функция для проверки количества при потере фокуса в диалоге
+        def validate_quantity_focus_edit(event=None):
+            value = quantity_spin.get().strip()
+            if value == "":
+                quantity_spin.delete(0, tk.END)
+                quantity_spin.insert(0, "1" if available_var_inner.get() else "0")
+                return
+
+            if not value.isdigit():
+                quantity_spin.delete(0, tk.END)
+                quantity_spin.insert(0, "1" if available_var_inner.get() else "0")
+                messagebox.showwarning("Некорректное значение", "Количество должно быть целым положительным числом.")
+                return
+
+            try:
+                num = int(value)
+                if num < 0:
+                    quantity_spin.delete(0, tk.END)
+                    quantity_spin.insert(0, "0")
+                    messagebox.showwarning("Некорректное значение",
+                                           "Количество не может быть отрицательным. Установлено 0.")
+                elif num > 999:
+                    quantity_spin.delete(0, tk.END)
+                    quantity_spin.insert(0, "999")
+                    messagebox.showwarning("Некорректное значение", "Количество не может превышать 999.")
+                elif available_var_inner.get() and num == 0:
+                    quantity_spin.delete(0, tk.END)
+                    quantity_spin.insert(0, "1")
+                    messagebox.showwarning("Некорректное значение",
+                                           "Если игра в наличии, количество должно быть не менее 1.")
+                elif not available_var_inner.get() and num != 0:
+                    quantity_spin.delete(0, tk.END)
+                    quantity_spin.insert(0, "0")
+                    messagebox.showwarning("Некорректное значение", "Если игра не в наличии, количество должно быть 0.")
+            except ValueError:
+                quantity_spin.delete(0, tk.END)
+                quantity_spin.insert(0, "1" if available_var_inner.get() else "0")
+
+        quantity_spin.bind("<FocusOut>", validate_quantity_focus_edit)
+
+        # Функция для обновления количества при изменении чекбокса
+        def on_available_change_edit():
+            if not available_var_inner.get():
+                quantity_spin.delete(0, tk.END)
+                quantity_spin.insert(0, "0")
+            else:
+                current_val = quantity_spin.get()
+                if current_val == "0" or current_val == "":
+                    quantity_spin.delete(0, tk.END)
+                    quantity_spin.insert(0, "1")
+
+        available_check.config(command=on_available_change_edit)
 
         def save_changes():
+            # Валидация всех полей
             new_name = name_entry.get().strip()
-            if not new_name:
-                messagebox.showwarning("Ошибка", "Название не может быть пустым")
+            valid, error = self.validate_name(new_name)
+            if not valid:
+                self.show_field_error("Название", error)
+                name_entry.focus()
                 return
+
+            new_players = players_entry.get().strip()
+            valid, error = self.validate_players(new_players)
+            if not valid:
+                self.show_field_error("Игроки", error)
+                players_entry.focus()
+                return
+
+            new_age = age_entry.get().strip()
+            valid, error = self.validate_age(new_age)
+            if not valid:
+                self.show_field_error("Возраст", error)
+                age_entry.focus()
+                return
+
+            new_time = time_entry.get().strip()
+            valid, error = self.validate_time(new_time)
+            if not valid:
+                self.show_field_error("Время партии", error)
+                time_entry.focus()
+                return
+
             try:
-                new_quantity = int(quantity_spin.get())
+                quantity_text = quantity_spin.get().strip()
+                if quantity_text == "":
+                    self.show_field_error("Количество", "Поле 'Количество' не может быть пустым")
+                    quantity_spin.focus()
+                    return
+
+                if not quantity_text.isdigit() or quantity_text.startswith('-'):
+                    self.show_field_error("Количество",
+                                          "Количество должно быть целым неотрицательным числом (без минуса и дробных)")
+                    quantity_spin.focus()
+                    return
+
+                new_quantity = int(quantity_text)
+
+                valid, error = self.validate_quantity(new_quantity, available_var_inner.get())
+                if not valid:
+                    self.show_field_error("Количество", error)
+                    quantity_spin.focus()
+                    return
+
             except ValueError:
-                new_quantity = 0
+                self.show_field_error("Количество", "Количество должно быть целым положительным числом")
+                quantity_spin.focus()
+                return
 
             conn = sqlite3.connect(DB_FILE)
             cursor = conn.cursor()
@@ -751,7 +985,7 @@ class BoardGamesApp(tk.Tk):
                 UPDATE games 
                 SET name=?, players=?, age=?, time_minutes=?, interaction=?, randomness=?, quantity=?
                 WHERE id=?
-            ''', (new_name, players_entry.get(), age_entry.get(), time_entry.get(),
+            ''', (new_name, new_players, new_age, new_time,
                   interaction_combo.get(), randomness_combo.get(), new_quantity, item))
             conn.commit()
             conn.close()
@@ -794,44 +1028,41 @@ class BoardGamesApp(tk.Tk):
             entry.config(foreground="black")
 
     def add_game(self):
+        """Добавление игры в БД с проверкой данных"""
         name = self.name_entry.get().strip()
-        if not name or name == "Название игры...":
-            messagebox.showwarning("Ошибка", "Введите название игры")
-            return
-
         players = self.players_entry.get().strip()
         age = self.age_entry.get().strip()
-        time_str = self.time_entry.get().strip()
-        interaction = self.interaction_combo.get()
-        randomness = self.randomness_combo.get()
-        quantity = int(self.quantity_spin.get()) if self.available_var.get() else 0
+        time_m = self.time_entry.get().strip()
+        qty = self.quantity_spin.get().strip()
 
-        conn = sqlite3.connect(DB_FILE)
-        cursor = conn.cursor()
-        cursor.execute('''
-            INSERT INTO games (name, players, age, time_minutes, interaction, randomness, quantity)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
-        ''', (name, players, age, time_str, interaction, randomness, quantity))
-        conn.commit()
-        conn.close()
+        # 1. Валидация через ваши методы (оставляем старую логику для гибкости)
+        for val, func in [(name, self.validate_name), (players, self.validate_players),
+                          (age, self.validate_age), (time_m, self.validate_time)]:
+            is_valid, msg = func(val)
+            if not is_valid:
+                messagebox.showerror("Ошибка", msg)
+                return
 
-        # Очистка формы
-        self.name_entry.delete(0, tk.END)
-        self.add_placeholder(self.name_entry, "Название игры...")
-        self.players_entry.delete(0, tk.END)
-        self.add_placeholder(self.players_entry, "2–4")
-        self.age_entry.delete(0, tk.END)
-        self.add_placeholder(self.age_entry, "12+")
-        self.time_entry.delete(0, tk.END)
-        self.add_placeholder(self.time_entry, "30–60")
-        self.interaction_combo.set("Кооперативная")
-        self.randomness_combo.set("Низкий")
-        self.quantity_spin.delete(0, tk.END)
-        self.quantity_spin.insert(0, "1")
-        self.available_var.set(True)
+        # 2. Валидация количества (включая проверку на отрицательные)
+        if not qty.isdigit() or int(qty) < 0:
+            messagebox.showerror("Ошибка", "Количество должно быть целым положительным числом")
+            return
 
-        self.apply_filter()
-        messagebox.showinfo("Успех", f"Игра '{name}' добавлена!")
+        # 3. Выполнение SQL
+        try:
+            conn = sqlite3.connect(DB_FILE)
+            cursor = conn.cursor()
+            cursor.execute('''INSERT INTO games 
+                (name, players, age, time_minutes, interaction, randomness, quantity) 
+                VALUES (?,?,?,?,?,?,?)''',
+                (name, players, age, time_m, self.interaction_combo.get(),
+                 self.randomness_combo.get(), int(qty)))
+            conn.commit()
+            conn.close()
+            self.load_games()
+            messagebox.showinfo("Успех", "Игра добавлена!")
+        except Exception as e:
+            messagebox.showerror("Ошибка БД", str(e))
 
     def load_games(self):
         """Загружает все игры и применяет текущий фильтр"""
