@@ -10,50 +10,34 @@ import sys
 import re
 
 # Цветовая схема
-BG_COLOR = "#2b1055"  # Фиолетовый фон
-CARD_BG = "#3e1a6f"  # Карточки формы и таблицы
-FG_LIGHT = "#f0e6ff"  # Светлый текст
-ACCENT = "#b47cff"  # Акцентный цвет
-ENTRY_BG = "#f7f3ff"  # Фон полей ввода
-BUTTON_BORDER = "#d4b8ff"  # Обводка для кнопок-смайликов
-FILTER_BG = "#4a2a8a"  # Фон панели фильтра
-ERROR_BG = "#ff6b6b"  # Цвет фона для ошибок
-ERROR_FG = "#ffffff"  # Цвет текста ошибки
+BG_COLOR = "#2b1055"
+CARD_BG = "#3e1a6f"
+FG_LIGHT = "#f0e6ff"
+ACCENT = "#b47cff"
+ENTRY_BG = "#f7f3ff"
+BUTTON_BORDER = "#d4b8ff"
+FILTER_BG = "#4a2a8a"
 
-# Название приложения (для папки в AppData)
 APP_NAME = "BoardGames"
 
 
 def get_app_data_path():
-    """
-    Возвращает путь к папке приложения в AppData
-    Создаёт папку, если её нет
-    """
     if getattr(sys, 'frozen', False):
-        # Запущено как .exe
         app_data = os.environ.get('APPDATA', os.path.expanduser('~\\AppData\\Roaming'))
     else:
-        # Запущено как .py (разработка)
         app_data = os.environ.get('APPDATA', os.path.expanduser('~\\AppData\\Roaming'))
-
-    # Путь к папке приложения
     app_folder = os.path.join(app_data, APP_NAME)
-
-    # Создаём папку, если её нет
     if not os.path.exists(app_folder):
         os.makedirs(app_folder)
-
     return app_folder
 
 
-# Получаем пути к системным файлам
 APP_DATA_PATH = get_app_data_path()
 SETTINGS_FILE = os.path.join(APP_DATA_PATH, "app_settings.json")
 DB_FILE = os.path.join(APP_DATA_PATH, "board_games.db")
 
 
 def load_settings():
-    """Загружает сохранённые настройки"""
     default_settings = {
         "last_export_path": str(Path.home() / "Desktop"),
         "last_import_path": str(Path.home() / "Desktop"),
@@ -70,7 +54,6 @@ def load_settings():
 
 
 def save_settings(settings):
-    """Сохраняет настройки"""
     try:
         with open(SETTINGS_FILE, 'w', encoding='utf-8') as f:
             json.dump(settings, f, ensure_ascii=False, indent=2)
@@ -78,10 +61,10 @@ def save_settings(settings):
         pass
 
 
-# Инициализация базы данных
 def init_db():
     conn = sqlite3.connect(DB_FILE)
     cursor = conn.cursor()
+
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS games (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -91,14 +74,15 @@ def init_db():
             time_minutes TEXT,
             interaction TEXT,
             randomness TEXT,
-            quantity INTEGER DEFAULT 1
+            quantity INTEGER DEFAULT 1,
+            price REAL DEFAULT 0
         )
     ''')
+
     conn.commit()
     conn.close()
 
 
-# Основное приложение
 class BoardGamesApp(tk.Tk):
     def __init__(self):
         super().__init__()
@@ -108,7 +92,6 @@ class BoardGamesApp(tk.Tk):
         self.configure(bg=BG_COLOR)
         self.resizable(True, True)
 
-        # Установка иконки окна (если есть)
         try:
             icon_path = os.path.join(APP_DATA_PATH, "icon.ico")
             if os.path.exists(icon_path):
@@ -117,80 +100,21 @@ class BoardGamesApp(tk.Tk):
             pass
 
         init_db()
-        self.filter_values = {
-            'name': '',
-            'players': '',
-            'age': '',
-            'time': '',
-            'interaction': '',
-            'randomness': '',
-            'quantity_min': '',
-            'quantity_max': ''
-        }
         self.setup_ui()
         self.load_games()
 
-    def validate_all_fields(self, name, players, age, time_m, qty):
-        """Проверяет данные и возвращает (True, "") или (False, "Сообщение об ошибке")"""
-        if not name or name.strip() == "": return False, "Название не может быть пустым"
-
-        # Регулярки для проверки: только цифры, дефис или плюс, никакого минуса в начале
-        if not re.match(r'^\d+[\d\-]*$', players.strip()):
-            return False, "Поле 'Игроки' должно содержать только положительные числа или формат 2-4"
-        if not re.match(r'^\d+\+?$', age.strip()):
-            return False, "Поле 'Возраст' должно быть числом (например, 12+)"
-        if not re.match(r'^\d+[\d\-]*$', time_m.strip()):
-            return False, "Поле 'Время' должно быть числом или диапазоном (например, 30-60)"
-        if not qty.isdigit() or int(qty) < 0:
-            return False, "Количество должно быть положительным числом"
-
-        return True, ""
-
-    def validate_all_fields(self):
-        """Проверяет корректность всех полей ввода"""
-        # Проверка игроков (только цифры и дефис, не может начинаться с минуса)
-        players = self.players_entry.get().strip()
-        if not re.match(r'^\d+[\d\-]*$', players):
-            return False, "Поле 'Игроки' должно быть числом или диапазоном (например, 2-4)"
-
-        # Проверка возраста (цифры и возможный плюс, без минусов)
-        age = self.age_entry.get().strip()
-        if not re.match(r'^\d+\+?$', age):
-            return False, "Поле 'Возраст' должно быть числом (например, 12+)"
-
-        # Проверка времени (только цифры и дефис)
-        time = self.time_entry.get().strip()
-        if not re.match(r'^\d+[\d\-]*$', time):
-            return False, "Поле 'Время' должно быть числом или диапазоном (например, 30-60)"
-
-        return True, ""
-
-    def is_valid_input(self, value, field_type):
-        """Проверка: не пусто, без минусов, только цифры/диапазоны."""
-        val = value.strip()
-        if not val or val == "" or val in ["Название игры...", "2–4", "12+", "30–60"]:
-            return False
-        if field_type == "int":  # Для количества
-            return val.isdigit() and int(val) >= 0
-        if field_type == "range":  # Для игроков/времени (цифры + дефис)
-            return bool(re.match(r'^\d+[\d\-]*$', val))
-        return True
-
     def setup_ui(self):
-        # Основной контейнер с отступами
         main_frame = tk.Frame(self, bg=BG_COLOR)
         main_frame.pack(fill=tk.BOTH, expand=True, padx=20, pady=20)
 
-        # Левая панель — добавление игры
+        # Левая панель
         left_panel = tk.Frame(main_frame, bg=CARD_BG, relief=tk.FLAT, bd=0)
         left_panel.pack(side=tk.LEFT, fill=tk.Y, padx=(0, 20), pady=10)
 
-        # Заголовок формы
         title_label = tk.Label(left_panel, text="Добавить игру", font=("Segoe UI", 16, "bold"),
                                bg=CARD_BG, fg=FG_LIGHT)
         title_label.pack(pady=(15, 20), padx=20, anchor="w")
 
-        # Поля ввода
         fields_frame = tk.Frame(left_panel, bg=CARD_BG)
         fields_frame.pack(padx=20, pady=10, fill=tk.X)
 
@@ -247,7 +171,7 @@ class BoardGamesApp(tk.Tk):
         self.randomness_combo.pack(fill=tk.X, pady=(0, 15))
         self.randomness_combo.set("Низкий")
 
-        # Количество (спинбокс и чекбокс)
+        # Количество
         quantity_frame = tk.Frame(fields_frame, bg=CARD_BG)
         quantity_frame.pack(fill=tk.X, pady=(0, 15))
         tk.Label(quantity_frame, text="КОЛИЧЕСТВО", font=("Segoe UI", 10, "bold"),
@@ -255,44 +179,66 @@ class BoardGamesApp(tk.Tk):
         qty_row = tk.Frame(quantity_frame, bg=CARD_BG)
         qty_row.pack(fill=tk.X)
 
-        # Функция валидации для Spinbox - разрешаем только цифры
         def validate_quantity_input(P):
-            """Строгая проверка: только целые неотрицательные числа 0-999"""
             if P == "":
                 return True
-            # Полностью блокируем минус, точку, запятую, буквы и т.д.
             if P.isdigit():
                 num = int(P)
                 return 0 <= num <= 999
             return False
 
         vcmd = (self.register(validate_quantity_input), '%P')
-
         self.quantity_spin = ttk.Spinbox(qty_row, from_=0, to=999, width=5, font=("Segoe UI", 11),
                                          validate='key', validatecommand=vcmd)
         self.quantity_spin.pack(side=tk.LEFT, padx=(0, 10))
-
-        # Привязываем событие потери фокуса для очистки некорректного ввода
         self.quantity_spin.bind("<FocusOut>", self.validate_quantity_focus)
 
         self.available_var = tk.BooleanVar()
         self.available_check = ttk.Checkbutton(qty_row, text="В наличии", variable=self.available_var,
-                                               style="Accent.TCheckbutton",
                                                command=self.on_available_change)
         self.available_check.pack(side=tk.LEFT)
         self.available_var.set(True)
 
-        # Кнопка добавить
-        add_btn = tk.Button(left_panel, text="+ Добавить", command=self.add_game,
+        # Цена
+        price_frame = tk.Frame(fields_frame, bg=CARD_BG)
+        price_frame.pack(fill=tk.X, pady=(0, 15))
+        tk.Label(price_frame, text="ЦЕНА (₽)", font=("Segoe UI", 10, "bold"),
+                 bg=CARD_BG, fg=FG_LIGHT).pack(anchor="w", pady=(0, 5))
+
+        def validate_price_input(P):
+            if P == "":
+                return True
+            if P.replace('.', '').isdigit():
+                if P.count('.') <= 1:
+                    return True
+            return False
+
+        price_vcmd = (self.register(validate_price_input), '%P')
+        self.price_entry = ttk.Entry(price_frame, font=("Segoe UI", 11), validate='key', validatecommand=price_vcmd)
+        self.price_entry.pack(fill=tk.X)
+        self.price_entry.insert(0, "0.00")
+        self.price_entry.bind("<FocusIn>", lambda e: self.clear_placeholder(self.price_entry, "0.00"))
+        self.price_entry.bind("<FocusOut>", self.validate_price_focus)
+
+        # Кнопки (добавить и очистить поля)
+        btn_frame_bottom = tk.Frame(left_panel, bg=CARD_BG)
+        btn_frame_bottom.pack(pady=(20, 30), padx=20, fill=tk.X)
+
+        add_btn = tk.Button(btn_frame_bottom, text="+ Добавить", command=self.add_game,
                             font=("Segoe UI", 12, "bold"), bg=ACCENT, fg="white",
                             relief=tk.FLAT, padx=20, pady=8, cursor="hand2")
-        add_btn.pack(pady=(20, 30), padx=20, fill=tk.X)
+        add_btn.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 10))
 
-        # Правая панель — каталог
+        clear_btn = tk.Button(btn_frame_bottom, text="🧹 Очистить поля", command=self.clear_all_fields,
+                              font=("Segoe UI", 12, "bold"), bg="#ff6b6b", fg="white",
+                              relief=tk.FLAT, padx=20, pady=8, cursor="hand2")
+        clear_btn.pack(side=tk.RIGHT, fill=tk.X, expand=True, padx=(10, 0))
+
+        # Правая панель
         right_panel = tk.Frame(main_frame, bg=CARD_BG, relief=tk.FLAT)
         right_panel.pack(side=tk.RIGHT, fill=tk.BOTH, expand=True, pady=10)
 
-        # Верхняя панель с заголовком и кнопками экспорта/импорта
+        # Верхняя панель с заголовком и кнопками
         top_bar = tk.Frame(right_panel, bg=CARD_BG)
         top_bar.pack(fill=tk.X, padx=20, pady=(15, 10))
 
@@ -300,7 +246,6 @@ class BoardGamesApp(tk.Tk):
                                  bg=CARD_BG, fg=FG_LIGHT)
         catalog_title.pack(side=tk.LEFT)
 
-        # Кнопки экспорта и импорта
         btn_frame = tk.Frame(top_bar, bg=CARD_BG)
         btn_frame.pack(side=tk.RIGHT)
 
@@ -312,9 +257,15 @@ class BoardGamesApp(tk.Tk):
         import_btn = tk.Button(btn_frame, text="📥 Импорт из Excel", command=self.import_from_excel,
                                font=("Segoe UI", 10, "bold"), bg="#3f6c8c", fg="white",
                                relief=tk.FLAT, padx=12, pady=5, cursor="hand2")
-        import_btn.pack(side=tk.LEFT)
+        import_btn.pack(side=tk.LEFT, padx=(0, 10))
 
-        # Панель фильтрации
+        # НОВАЯ КНОПКА - Очистить базу данных
+        clear_db_btn = tk.Button(btn_frame, text="🗑️ Очистить базу", command=self.clear_all_games,
+                                 font=("Segoe UI", 10, "bold"), bg="#cc0000", fg="white",
+                                 relief=tk.FLAT, padx=12, pady=5, cursor="hand2")
+        clear_db_btn.pack(side=tk.LEFT, padx=(0, 10))
+
+        # Фильтр
         filter_frame = tk.Frame(right_panel, bg=FILTER_BG, relief=tk.GROOVE, bd=1)
         filter_frame.pack(fill=tk.X, padx=20, pady=(5, 10))
 
@@ -322,7 +273,6 @@ class BoardGamesApp(tk.Tk):
                                 bg=FILTER_BG, fg=FG_LIGHT)
         filter_title.pack(anchor="w", padx=10, pady=(8, 5))
 
-        # Первая строка фильтров
         filter_row1 = tk.Frame(filter_frame, bg=FILTER_BG)
         filter_row1.pack(fill=tk.X, padx=10, pady=5)
 
@@ -350,7 +300,6 @@ class BoardGamesApp(tk.Tk):
         self.filter_time.pack(side=tk.LEFT, padx=(0, 15))
         self.filter_time.bind("<KeyRelease>", lambda e: self.apply_filter())
 
-        # Вторая строка фильтров
         filter_row2 = tk.Frame(filter_frame, bg=FILTER_BG)
         filter_row2.pack(fill=tk.X, padx=10, pady=(0, 8))
 
@@ -383,13 +332,27 @@ class BoardGamesApp(tk.Tk):
         self.filter_qty_max.pack(side=tk.LEFT, padx=(0, 15))
         self.filter_qty_max.bind("<KeyRelease>", lambda e: self.apply_filter())
 
-        # Кнопка сброса фильтра
-        reset_btn = tk.Button(filter_row2, text="✖ Сбросить фильтр", command=self.reset_filter,
+        filter_row3 = tk.Frame(filter_frame, bg=FILTER_BG)
+        filter_row3.pack(fill=tk.X, padx=10, pady=(0, 8))
+
+        tk.Label(filter_row3, text="Цена от:", bg=FILTER_BG, fg=FG_LIGHT, font=("Segoe UI", 9)).pack(side=tk.LEFT,
+                                                                                                     padx=(0, 5))
+        self.filter_price_min = ttk.Entry(filter_row3, width=8)
+        self.filter_price_min.pack(side=tk.LEFT, padx=(0, 5))
+        self.filter_price_min.bind("<KeyRelease>", lambda e: self.apply_filter())
+
+        tk.Label(filter_row3, text="до:", bg=FILTER_BG, fg=FG_LIGHT, font=("Segoe UI", 9)).pack(side=tk.LEFT,
+                                                                                                padx=(0, 5))
+        self.filter_price_max = ttk.Entry(filter_row3, width=8)
+        self.filter_price_max.pack(side=tk.LEFT, padx=(0, 15))
+        self.filter_price_max.bind("<KeyRelease>", lambda e: self.apply_filter())
+
+        reset_btn = tk.Button(filter_row3, text="✖ Сбросить фильтр", command=self.reset_filter,
                               font=("Segoe UI", 9), bg="#6a3a9a", fg=FG_LIGHT,
                               relief=tk.FLAT, padx=10, pady=2, cursor="hand2")
         reset_btn.pack(side=tk.LEFT, padx=(10, 0))
 
-        # Таблица с прокруткой
+        # Таблица
         table_frame = tk.Frame(right_panel, bg=CARD_BG)
         table_frame.pack(fill=tk.BOTH, expand=True, padx=20, pady=(0, 20))
 
@@ -398,46 +361,47 @@ class BoardGamesApp(tk.Tk):
 
         self.tree = ttk.Treeview(table_frame,
                                  columns=("name", "players", "age", "time", "interaction", "randomness", "quantity",
-                                          "actions"),
+                                          "price", "actions"),
                                  show="headings", yscrollcommand=scroll_y.set, xscrollcommand=scroll_x.set)
         scroll_y.config(command=self.tree.yview)
         scroll_x.config(command=self.tree.xview)
 
-        # Настройка колонок
-        self.tree.heading("name", text="Название")
-        self.tree.heading("players", text="Игроки")
-        self.tree.heading("age", text="Возраст")
-        self.tree.heading("time", text="Время (мин)")
-        self.tree.heading("interaction", text="Взаимодействие")
-        self.tree.heading("randomness", text="Случайность")
-        self.tree.heading("quantity", text="Кол-во")
-        self.tree.heading("actions", text="Действия")
+        columns = {
+            "name": "Название",
+            "players": "Игроки",
+            "age": "Возраст",
+            "time": "Время (мин)",
+            "interaction": "Взаимодействие",
+            "randomness": "Случайность",
+            "quantity": "Кол-во",
+            "price": "Цена (₽)"
+        }
 
-        self.tree.column("name", width=180, minwidth=120)
-        self.tree.column("players", width=80, minwidth=60)
-        self.tree.column("age", width=70, minwidth=60)
-        self.tree.column("time", width=100, minwidth=80)
-        self.tree.column("interaction", width=130, minwidth=100)
-        self.tree.column("randomness", width=90, minwidth=80)
-        self.tree.column("quantity", width=70, minwidth=60)
+        for col, text in columns.items():
+            self.tree.heading(col, text=text, command=lambda _col=col: self.sort_column(_col, False))
+
+            width_map = {
+                "name": 170, "players": 70, "age": 60, "time": 90,
+                "interaction": 120, "randomness": 80, "quantity": 60, "price": 80
+            }
+            self.tree.column(col, width=width_map.get(col, 100), minwidth=50,
+                             anchor="center" if col in ["quantity", "price"] else "w")
+
         self.tree.column("actions", width=100, anchor="center", stretch=False)
 
         self.tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         scroll_y.pack(side=tk.RIGHT, fill=tk.Y)
         scroll_x.pack(side=tk.BOTTOM, fill=tk.X)
 
-        # Словарь для хранения виджетов кнопок
         self.action_buttons = {}
-        self.current_filtered_ids = []  # Хранит ID отфильтрованных игр
+        self.current_filtered_ids = []
 
-        # Привязка событий для обновления кнопок
         self.tree.bind("<<TreeviewOpen>>", self.refresh_buttons)
         self.tree.bind("<<TreeviewClose>>", self.refresh_buttons)
         self.tree.bind("<Configure>", self.refresh_buttons)
         scroll_y.config(command=self.on_scroll)
         scroll_x.config(command=self.on_scroll)
 
-        # Метка для пустой БД
         self.empty_label = tk.Label(right_panel,
                                     text="База данных пуста\nИспользуйте форму слева для добавления первой игры",
                                     font=("Segoe UI", 12, "italic"), bg=CARD_BG, fg=FG_LIGHT,
@@ -445,11 +409,121 @@ class BoardGamesApp(tk.Tk):
         self.empty_label.place(relx=0.5, rely=0.5, anchor="center")
         self.empty_label.lower()
 
-        # Сохраняем геометрию при закрытии
         self.bind("<Configure>", self.on_window_resize)
 
+    def clear_all_games(self):
+        """Удаляет все игры из базы данных"""
+        if messagebox.askyesno("Подтверждение",
+                               "Вы уверены, что хотите удалить ВСЕ игры из базы данных?\nЭто действие нельзя отменить!"):
+            if messagebox.askyesno("Окончательное подтверждение", "Удалить ВСЕ игры?"):
+                try:
+                    conn = sqlite3.connect(DB_FILE)
+                    cursor = conn.cursor()
+                    cursor.execute("DELETE FROM games")
+                    conn.commit()
+                    conn.close()
+                    self.load_games()
+                    messagebox.showinfo("Успешно", "Все игры удалены из базы данных!")
+                except Exception as e:
+                    messagebox.showerror("Ошибка", f"Не удалось очистить базу:\n{str(e)}")
+
+    def clear_all_fields(self):
+        """Очищает все поля формы"""
+        if messagebox.askyesno("Подтверждение", "Очистить все поля формы?"):
+            self.name_entry.delete(0, tk.END)
+            self.name_entry.insert(0, "Название игры...")
+            self.name_entry.config(foreground="gray")
+
+            self.players_entry.delete(0, tk.END)
+            self.players_entry.insert(0, "2–4")
+            self.players_entry.config(foreground="gray")
+
+            self.age_entry.delete(0, tk.END)
+            self.age_entry.insert(0, "12+")
+            self.age_entry.config(foreground="gray")
+
+            self.time_entry.delete(0, tk.END)
+            self.time_entry.insert(0, "30–60")
+            self.time_entry.config(foreground="gray")
+
+            self.interaction_combo.set("Кооперативная")
+            self.randomness_combo.set("Низкий")
+
+            self.quantity_spin.delete(0, tk.END)
+            self.quantity_spin.insert(0, "1")
+
+            self.price_entry.delete(0, tk.END)
+            self.price_entry.insert(0, "0.00")
+
+            self.available_var.set(True)
+
+            messagebox.showinfo("Очистка", "Все поля очищены!")
+
+    def validate_price_focus(self, event=None):
+        value = self.price_entry.get().strip()
+        if value == "":
+            self.price_entry.delete(0, tk.END)
+            self.price_entry.insert(0, "0.00")
+            return
+
+        try:
+            cleaned = re.sub(r'[^\d.]', '', value)
+            if cleaned:
+                num = float(cleaned)
+                if num < 0:
+                    num = 0
+                formatted = f"{num:.2f}"
+                self.price_entry.delete(0, tk.END)
+                self.price_entry.insert(0, formatted)
+            else:
+                self.price_entry.delete(0, tk.END)
+                self.price_entry.insert(0, "0.00")
+        except:
+            self.price_entry.delete(0, tk.END)
+            self.price_entry.insert(0, "0.00")
+
+    def sort_column(self, col, reverse):
+        items = [(self.tree.set(item, col), item) for item in self.tree.get_children('')]
+
+        def sort_key(t):
+            val = t[0]
+
+            if col == "price":
+                try:
+                    return float(val.replace('₽', '').strip()) if val else 0
+                except:
+                    return 0
+
+            elif col == "time":
+                nums = re.findall(r'\d+', val)
+                return int(nums[0]) if nums else 0
+
+            elif col == "randomness":
+                order = {"Низкий": 0, "Средний": 1, "Высокий": 2}
+                return order.get(val, 0)
+
+            elif col == "age":
+                nums = re.findall(r'\d+', val)
+                return int(nums[0]) if nums else 0
+
+            elif col == "quantity":
+                try:
+                    return int(val) if val else 0
+                except:
+                    return 0
+
+            else:
+                return val.lower() if val else ""
+
+        items.sort(key=sort_key, reverse=reverse)
+
+        for index, (val, item) in enumerate(items):
+            self.tree.move(item, '', index)
+
+        self.tree.heading(col, command=lambda: self.sort_column(col, not reverse))
+        self.after(50, self.refresh_buttons)
+
     def on_available_change(self):
-        """Обработчик изменения состояния чекбокса 'В наличии'"""
         if not self.available_var.get():
             self.quantity_spin.delete(0, tk.END)
             self.quantity_spin.insert(0, "0")
@@ -460,64 +534,42 @@ class BoardGamesApp(tk.Tk):
                 self.quantity_spin.insert(0, "1")
 
     def validate_quantity_focus(self, event=None):
-        """Проверяет значение в поле количества при потере фокуса"""
         value = self.quantity_spin.get().strip()
-
-        # Если поле пустое
         if value == "":
             self.quantity_spin.delete(0, tk.END)
             self.quantity_spin.insert(0, "1" if self.available_var.get() else "0")
             return
 
-        # Проверяем, что значение состоит только из цифр
         if not value.isdigit():
             self.quantity_spin.delete(0, tk.END)
             self.quantity_spin.insert(0, "1" if self.available_var.get() else "0")
-            messagebox.showwarning("Ошибка ввода",
-                                   "Количество должно быть целым неотрицательным числом (0-999).")
             return
 
         try:
             num = int(value)
-            # Проверяем диапазон
             if num < 0:
                 self.quantity_spin.delete(0, tk.END)
                 self.quantity_spin.insert(0, "0")
-                messagebox.showwarning("Некорректное значение",
-                                       "Количество не может быть отрицательным. Установлено значение 0.")
             elif num > 999:
                 self.quantity_spin.delete(0, tk.END)
                 self.quantity_spin.insert(0, "999")
-                messagebox.showwarning("Некорректное значение",
-                                       "Количество не может превышать 999. Установлено максимальное значение.")
             else:
-                # Если игра в наличии, проверяем что количество не 0
                 if self.available_var.get() and num == 0:
                     self.quantity_spin.delete(0, tk.END)
                     self.quantity_spin.insert(0, "1")
-                    messagebox.showwarning("Некорректное значение",
-                                           "Если игра в наличии, количество должно быть не менее 1. Установлено значение 1.")
-                # Если игра не в наличии, проверяем что количество равно 0
                 elif not self.available_var.get() and num != 0:
                     self.quantity_spin.delete(0, tk.END)
                     self.quantity_spin.insert(0, "0")
-                    messagebox.showwarning("Некорректное значение",
-                                           "Если игра не в наличии, количество должно быть 0. Установлено значение 0.")
         except ValueError:
             self.quantity_spin.delete(0, tk.END)
             self.quantity_spin.insert(0, "1" if self.available_var.get() else "0")
-            messagebox.showwarning("Некорректное значение",
-                                   "Введите целое положительное число. Установлено значение по умолчанию.")
 
     def on_window_resize(self, event=None):
-        """Сохраняет размер окна при изменении"""
         if event.widget == self:
             self.settings["window_geometry"] = self.geometry()
             save_settings(self.settings)
 
     def apply_filter(self):
-        """Применяет фильтр к таблице"""
-        # Собираем значения фильтров
         name_filter = self.filter_name.get().strip().lower()
         players_filter = self.filter_players.get().strip().lower()
         age_filter = self.filter_age.get().strip().lower()
@@ -538,73 +590,73 @@ class BoardGamesApp(tk.Tk):
         except ValueError:
             qty_max = None
 
-        # Получаем все игры из БД
+        try:
+            price_min = float(self.filter_price_min.get()) if self.filter_price_min.get().strip() else None
+            if price_min is not None and price_min < 0:
+                price_min = 0
+        except ValueError:
+            price_min = None
+        try:
+            price_max = float(self.filter_price_max.get()) if self.filter_price_max.get().strip() else None
+            if price_max is not None and price_max < 0:
+                price_max = 0
+        except ValueError:
+            price_max = None
+
         conn = sqlite3.connect(DB_FILE)
         cursor = conn.cursor()
         cursor.execute(
-            "SELECT id, name, players, age, time_minutes, interaction, randomness, quantity FROM games ORDER BY name")
+            "SELECT id, name, players, age, time_minutes, interaction, randomness, quantity, price FROM games ORDER BY name")
         all_games = cursor.fetchall()
         conn.close()
 
-        # Фильтруем
         filtered = []
         for game in all_games:
-            game_id, name, players, age, time_str, interaction, randomness, quantity = game
+            game_id, name, players, age, time_str, interaction, randomness, quantity, price = game
 
-            # Фильтр по названию
             if name_filter and name_filter not in name.lower():
                 continue
-
-            # Фильтр по игрокам
             if players_filter and players_filter not in players.lower():
                 continue
-
-            # Фильтр по возрасту
             if age_filter and age_filter not in age.lower():
                 continue
-
-            # Фильтр по времени
             if time_filter and time_filter not in time_str.lower():
                 continue
-
-            # Фильтр по взаимодействию
             if interaction_filter and interaction != interaction_filter:
                 continue
-
-            # Фильтр по случайности
             if randomness_filter and randomness != randomness_filter:
                 continue
-
-            # Фильтр по количеству
             if qty_min is not None and quantity < qty_min:
                 continue
             if qty_max is not None and quantity > qty_max:
+                continue
+            if price_min is not None and price < price_min:
+                continue
+            if price_max is not None and price > price_max:
                 continue
 
             filtered.append(game)
 
         self.current_filtered_ids = [g[0] for g in filtered]
 
-        # Обновляем таблицу
         for row in self.tree.get_children():
             self.tree.delete(row)
 
         if filtered:
             self.empty_label.place_forget()
             for game in filtered:
-                game_id, name, players, age, time_str, interaction, randomness, quantity = game
+                game_id, name, players, age, time_str, interaction, randomness, quantity, price = game
+                formatted_price = f"{price:.2f} ₽" if price else "0.00 ₽"
                 self.tree.insert("", tk.END, iid=game_id,
-                                 values=(name, players, age, time_str, interaction, randomness, quantity, ""))
+                                 values=(name, players, age, time_str, interaction, randomness, quantity,
+                                         formatted_price, ""))
         else:
-            # Показываем сообщение о пустом результате фильтрации
             self.empty_label.config(text="Нет игр, соответствующих фильтру\nИзмените условия фильтрации")
             self.empty_label.place(relx=0.5, rely=0.5, anchor="center")
 
-        # Обновляем кнопки
         self.after(100, self.refresh_buttons)
 
     def reset_filter(self):
-        """Сбрасывает все фильтры"""
         self.filter_name.delete(0, tk.END)
         self.filter_players.delete(0, tk.END)
         self.filter_age.delete(0, tk.END)
@@ -613,11 +665,12 @@ class BoardGamesApp(tk.Tk):
         self.filter_randomness.set("")
         self.filter_qty_min.delete(0, tk.END)
         self.filter_qty_max.delete(0, tk.END)
+        self.filter_price_min.delete(0, tk.END)
+        self.filter_price_max.delete(0, tk.END)
         self.apply_filter()
         self.empty_label.config(text="База данных пуста\nИспользуйте форму слева для добавления первой игры")
 
     def on_scroll(self, *args):
-        """Обработка прокрутки для синхронизации кнопок"""
         if args[0] == 'moveto':
             self.tree.yview(*args)
         else:
@@ -625,8 +678,6 @@ class BoardGamesApp(tk.Tk):
         self.refresh_buttons()
 
     def refresh_buttons(self, event=None):
-        """Обновляет позиции кнопок-смайликов для всех видимых строк"""
-        # Удаляем старые кнопки
         for btn_dict in self.action_buttons.values():
             for btn in btn_dict.values():
                 if isinstance(btn, (tk.Button, tk.Frame)):
@@ -636,11 +687,10 @@ class BoardGamesApp(tk.Tk):
                         pass
         self.action_buttons.clear()
 
-        # Для каждого элемента в tree создаём кнопки, если строка видима
         for item in self.tree.get_children():
             bbox = self.tree.bbox(item)
             if bbox:
-                col_bbox = self.tree.bbox(item, column="#8")
+                col_bbox = self.tree.bbox(item, column="#9")
                 if col_bbox:
                     x, y, width, height = col_bbox
                     btn_frame = tk.Frame(self.tree, bg=CARD_BG)
@@ -668,13 +718,11 @@ class BoardGamesApp(tk.Tk):
         return True, ""
 
     def validate_players(self, players):
-        # Разрешаем только цифры и дефис, запрещаем минус в начале
         if not re.match(r'^\d+[\d\-]*$', players.strip()):
             return False, "Поле 'Игроки' должно быть числом или диапазоном (напр. 2-4)"
         return True, ""
 
     def validate_age(self, age):
-        # Только цифры и возможный плюс в конце
         if not re.match(r'^\d+\+?$', age.strip()):
             return False, "Поле 'Возраст' должно быть числом (напр. 12+)"
         return True, ""
@@ -685,7 +733,6 @@ class BoardGamesApp(tk.Tk):
         return True, ""
 
     def validate_quantity(self, quantity, is_available):
-        """Проверка количества"""
         if quantity < 0:
             return False, "Количество не может быть отрицательным"
         if quantity > 999:
@@ -698,17 +745,23 @@ class BoardGamesApp(tk.Tk):
                 return False, "Если игра не в наличии, количество должно быть 0"
         return True, ""
 
+    def validate_price(self, price):
+        try:
+            price_num = float(price)
+            if price_num < 0:
+                return False, "Цена не может быть отрицательной"
+            return True, ""
+        except ValueError:
+            return False, "Цена должна быть числом"
+
     def show_field_error(self, field_name, error_message):
-        """Показывает ошибку для конкретного поля"""
         messagebox.showerror(f"Ошибка в поле '{field_name}'", error_message)
 
     def export_to_excel(self):
-        """Экспорт отфильтрованных игр в Excel файл с выбором пути"""
-        # Собираем данные из отображаемых строк
         games_data = []
         for item in self.tree.get_children():
             values = self.tree.item(item, "values")
-            if values and len(values) >= 7:
+            if values and len(values) >= 8:
                 games_data.append({
                     'Название': values[0],
                     'Игроки': values[1],
@@ -716,14 +769,14 @@ class BoardGamesApp(tk.Tk):
                     'Время (мин)': values[3],
                     'Взаимодействие': values[4],
                     'Случайность': values[5],
-                    'Количество': values[6]
+                    'Количество': values[6],
+                    'Цена': values[7].replace(' ₽', '')
                 })
 
         if not games_data:
             messagebox.showwarning("Экспорт", "Нет данных для экспорта")
             return
 
-        # Предлагаем выбрать путь для сохранения
         initial_dir = self.settings.get("last_export_path", str(Path.home() / "Desktop"))
         initial_file = f"board_games_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
 
@@ -739,65 +792,51 @@ class BoardGamesApp(tk.Tk):
             try:
                 df = pd.DataFrame(games_data)
                 df.to_excel(filename, index=False, sheet_name="Настольные игры")
-
-                # Сохраняем путь для будущих экспортов
                 self.settings["last_export_path"] = str(Path(filename).parent)
                 save_settings(self.settings)
-
                 messagebox.showinfo("Экспорт", f"Успешно экспортировано {len(games_data)} игр в файл:\n{filename}")
             except Exception as e:
                 messagebox.showerror("Ошибка экспорта", f"Не удалось сохранить файл:\n{str(e)}")
 
     def import_from_excel(self):
         filename = filedialog.askopenfilename(filetypes=[("Excel files", "*.xlsx")])
-        if not filename: return
+        if not filename:
+            return
 
         try:
-            # Читаем файл
             df = pd.read_excel(filename)
-
-            # Отладочное сообщение (поможет понять, сколько колонок видит программа)
-            print(f"Колонок найдено: {len(df.columns)}")
-            print(f"Названия колонок: {list(df.columns)}")
-
             conn = sqlite3.connect(DB_FILE)
             cursor = conn.cursor()
 
             for index, row in df.iterrows():
-                # Превращаем строку в список, чтобы безопасно достать данные
                 data = row.tolist()
-
-                # Проверка: есть ли у нас хотя бы 7 элементов в строке
-                if len(data) < 7:
-                    raise ValueError(f"В строке {index + 2} недостаточно данных (всего {len(data)})")
-
+                if len(data) < 8:
+                    continue
                 cursor.execute('''INSERT INTO games 
-                                 (name, players, age, time_minutes, interaction, randomness, quantity) 
-                                 VALUES (?, ?, ?, ?, ?, ?, ?)''',
+                                 (name, players, age, time_minutes, interaction, randomness, quantity, price) 
+                                 VALUES (?, ?, ?, ?, ?, ?, ?, ?)''',
                                (str(data[0]), str(data[1]), str(data[2]), str(data[3]),
-                                str(data[4]), str(data[5]), int(data[6])))
+                                str(data[4]), str(data[5]), int(data[6]), float(data[7])))
 
             conn.commit()
             conn.close()
             self.load_games()
             messagebox.showinfo("Успех", "Игры успешно импортированы!")
-
         except Exception as e:
-            # Теперь сообщение об ошибке покажет реальную причину
             messagebox.showerror("Ошибка импорта", f"Детали ошибки: {str(e)}")
-    def edit_game(self, item):
 
-        """Редактирование выбранной игры"""
+    def edit_game(self, item):
         values = self.tree.item(item, "values")
         if not values:
             return
 
-        old_name, players, age, time_str, interaction, randomness, quantity = values[:7]
+        old_name, players, age, time_str, interaction, randomness, quantity, price_str = values[:8]
+        price_value = float(price_str.replace(' ₽', '').replace(' ₽', ''))
 
         dialog = tk.Toplevel(self)
         dialog.title("Редактировать игру")
         dialog.configure(bg=CARD_BG)
-        dialog.geometry("420x650")
+        dialog.geometry("420x700")
         dialog.resizable(False, False)
         dialog.transient(self)
         dialog.grab_set()
@@ -842,13 +881,10 @@ class BoardGamesApp(tk.Tk):
 
         tk.Label(dialog, text="Количество", font=("Segoe UI", 10, "bold"),
                  bg=CARD_BG, fg=FG_LIGHT).pack(anchor="w", padx=20, pady=(5, 5))
-
         quantity_frame_inner = tk.Frame(dialog, bg=CARD_BG)
-        quantity_frame_inner.pack(padx=20, pady=(0, 20), anchor="w", fill=tk.X)
+        quantity_frame_inner.pack(padx=20, pady=(0, 10), anchor="w", fill=tk.X)
 
-        # Функция валидации для редактирования - только цифры
         def validate_quantity_edit(P):
-            """Строгая проверка: только целые неотрицательные числа"""
             if P == "":
                 return True
             if P.isdigit():
@@ -857,20 +893,42 @@ class BoardGamesApp(tk.Tk):
             return False
 
         vcmd_edit = (dialog.register(validate_quantity_edit), '%P')
-
         quantity_spin = ttk.Spinbox(quantity_frame_inner, from_=0, to=999, width=10, font=("Segoe UI", 11),
                                     validate='key', validatecommand=vcmd_edit)
         quantity_spin.pack(side=tk.LEFT, padx=(0, 10))
         available_var_inner = tk.BooleanVar()
-        available_check = ttk.Checkbutton(quantity_frame_inner, text="В наличии", variable=available_var_inner,
-                                          style="Accent.TCheckbutton")
+        available_check = ttk.Checkbutton(quantity_frame_inner, text="В наличии", variable=available_var_inner)
         available_check.pack(side=tk.LEFT)
 
         quantity_spin.delete(0, tk.END)
         quantity_spin.insert(0, quantity)
         available_var_inner.set(int(quantity) > 0)
 
-        # Функция для проверки количества при потере фокуса в диалоге
+        tk.Label(dialog, text="Цена (₽)", font=("Segoe UI", 10, "bold"),
+                 bg=CARD_BG, fg=FG_LIGHT).pack(anchor="w", padx=20, pady=(5, 5))
+        price_edit_entry = ttk.Entry(dialog, font=("Segoe UI", 11))
+        price_edit_entry.pack(padx=20, pady=(0, 10), fill=tk.X)
+        price_edit_entry.insert(0, f"{price_value:.2f}")
+
+        def validate_price_edit_focus(event=None):
+            value = price_edit_entry.get().strip()
+            try:
+                cleaned = re.sub(r'[^\d.]', '', value)
+                if cleaned:
+                    num = float(cleaned)
+                    if num < 0:
+                        num = 0
+                    price_edit_entry.delete(0, tk.END)
+                    price_edit_entry.insert(0, f"{num:.2f}")
+                else:
+                    price_edit_entry.delete(0, tk.END)
+                    price_edit_entry.insert(0, "0.00")
+            except:
+                price_edit_entry.delete(0, tk.END)
+                price_edit_entry.insert(0, "0.00")
+
+        price_edit_entry.bind("<FocusOut>", validate_price_edit_focus)
+
         def validate_quantity_focus_edit(event=None):
             value = quantity_spin.get().strip()
             if value == "":
@@ -881,7 +939,6 @@ class BoardGamesApp(tk.Tk):
             if not value.isdigit():
                 quantity_spin.delete(0, tk.END)
                 quantity_spin.insert(0, "1" if available_var_inner.get() else "0")
-                messagebox.showwarning("Некорректное значение", "Количество должно быть целым положительным числом.")
                 return
 
             try:
@@ -889,28 +946,21 @@ class BoardGamesApp(tk.Tk):
                 if num < 0:
                     quantity_spin.delete(0, tk.END)
                     quantity_spin.insert(0, "0")
-                    messagebox.showwarning("Некорректное значение",
-                                           "Количество не может быть отрицательным. Установлено 0.")
                 elif num > 999:
                     quantity_spin.delete(0, tk.END)
                     quantity_spin.insert(0, "999")
-                    messagebox.showwarning("Некорректное значение", "Количество не может превышать 999.")
                 elif available_var_inner.get() and num == 0:
                     quantity_spin.delete(0, tk.END)
                     quantity_spin.insert(0, "1")
-                    messagebox.showwarning("Некорректное значение",
-                                           "Если игра в наличии, количество должно быть не менее 1.")
                 elif not available_var_inner.get() and num != 0:
                     quantity_spin.delete(0, tk.END)
                     quantity_spin.insert(0, "0")
-                    messagebox.showwarning("Некорректное значение", "Если игра не в наличии, количество должно быть 0.")
             except ValueError:
                 quantity_spin.delete(0, tk.END)
                 quantity_spin.insert(0, "1" if available_var_inner.get() else "0")
 
         quantity_spin.bind("<FocusOut>", validate_quantity_focus_edit)
 
-        # Функция для обновления количества при изменении чекбокса
         def on_available_change_edit():
             if not available_var_inner.get():
                 quantity_spin.delete(0, tk.END)
@@ -924,7 +974,6 @@ class BoardGamesApp(tk.Tk):
         available_check.config(command=on_available_change_edit)
 
         def save_changes():
-            # Валидация всех полей
             new_name = name_entry.get().strip()
             valid, error = self.validate_name(new_name)
             if not valid:
@@ -954,6 +1003,17 @@ class BoardGamesApp(tk.Tk):
                 return
 
             try:
+                price_text = price_edit_entry.get().strip()
+                price_text = re.sub(r'[^\d.]', '', price_text)
+                new_price = float(price_text) if price_text else 0
+                if new_price < 0:
+                    new_price = 0
+            except ValueError:
+                self.show_field_error("Цена", "Цена должна быть числом")
+                price_edit_entry.focus()
+                return
+
+            try:
                 quantity_text = quantity_spin.get().strip()
                 if quantity_text == "":
                     self.show_field_error("Количество", "Поле 'Количество' не может быть пустым")
@@ -961,13 +1021,11 @@ class BoardGamesApp(tk.Tk):
                     return
 
                 if not quantity_text.isdigit() or quantity_text.startswith('-'):
-                    self.show_field_error("Количество",
-                                          "Количество должно быть целым неотрицательным числом (без минуса и дробных)")
+                    self.show_field_error("Количество", "Количество должно быть целым неотрицательным числом")
                     quantity_spin.focus()
                     return
 
                 new_quantity = int(quantity_text)
-
                 valid, error = self.validate_quantity(new_quantity, available_var_inner.get())
                 if not valid:
                     self.show_field_error("Количество", error)
@@ -983,10 +1041,10 @@ class BoardGamesApp(tk.Tk):
             cursor = conn.cursor()
             cursor.execute('''
                 UPDATE games 
-                SET name=?, players=?, age=?, time_minutes=?, interaction=?, randomness=?, quantity=?
+                SET name=?, players=?, age=?, time_minutes=?, interaction=?, randomness=?, quantity=?, price=?
                 WHERE id=?
             ''', (new_name, new_players, new_age, new_time,
-                  interaction_combo.get(), randomness_combo.get(), new_quantity, item))
+                  interaction_combo.get(), randomness_combo.get(), new_quantity, new_price, item))
             conn.commit()
             conn.close()
             dialog.destroy()
@@ -1003,7 +1061,6 @@ class BoardGamesApp(tk.Tk):
                   padx=20, pady=5, cursor="hand2").pack(side=tk.LEFT)
 
     def delete_game(self, item):
-        """Удаление игры"""
         values = self.tree.item(item, "values")
         game_name = values[0] if values else "игру"
         if messagebox.askyesno("Подтверждение", f"Удалить игру '{game_name}'?"):
@@ -1028,14 +1085,13 @@ class BoardGamesApp(tk.Tk):
             entry.config(foreground="black")
 
     def add_game(self):
-        """Добавление игры в БД с проверкой данных"""
         name = self.name_entry.get().strip()
         players = self.players_entry.get().strip()
         age = self.age_entry.get().strip()
         time_m = self.time_entry.get().strip()
         qty = self.quantity_spin.get().strip()
+        price_text = self.price_entry.get().strip()
 
-        # 1. Валидация через ваши методы (оставляем старую логику для гибкости)
         for val, func in [(name, self.validate_name), (players, self.validate_players),
                           (age, self.validate_age), (time_m, self.validate_time)]:
             is_valid, msg = func(val)
@@ -1043,39 +1099,64 @@ class BoardGamesApp(tk.Tk):
                 messagebox.showerror("Ошибка", msg)
                 return
 
-        # 2. Валидация количества (включая проверку на отрицательные)
         if not qty.isdigit() or int(qty) < 0:
             messagebox.showerror("Ошибка", "Количество должно быть целым положительным числом")
             return
 
-        # 3. Выполнение SQL
+        try:
+            price_text = re.sub(r'[^\d.]', '', price_text)
+            price = float(price_text) if price_text else 0
+            if price < 0:
+                price = 0
+        except ValueError:
+            messagebox.showerror("Ошибка", "Цена должна быть числом")
+            self.price_entry.focus()
+            return
+
         try:
             conn = sqlite3.connect(DB_FILE)
             cursor = conn.cursor()
             cursor.execute('''INSERT INTO games 
-                (name, players, age, time_minutes, interaction, randomness, quantity) 
-                VALUES (?,?,?,?,?,?,?)''',
-                (name, players, age, time_m, self.interaction_combo.get(),
-                 self.randomness_combo.get(), int(qty)))
+                (name, players, age, time_minutes, interaction, randomness, quantity, price) 
+                VALUES (?,?,?,?,?,?,?,?)''',
+                           (name, players, age, time_m, self.interaction_combo.get(),
+                            self.randomness_combo.get(), int(qty), price))
             conn.commit()
             conn.close()
             self.load_games()
+
+            self.name_entry.delete(0, tk.END)
+            self.name_entry.insert(0, "Название игры...")
+            self.players_entry.delete(0, tk.END)
+            self.players_entry.insert(0, "2–4")
+            self.age_entry.delete(0, tk.END)
+            self.age_entry.insert(0, "12+")
+            self.time_entry.delete(0, tk.END)
+            self.time_entry.insert(0, "30–60")
+            self.quantity_spin.delete(0, tk.END)
+            self.quantity_spin.insert(0, "1")
+            self.price_entry.delete(0, tk.END)
+            self.price_entry.insert(0, "0.00")
+            self.interaction_combo.set("Кооперативная")
+            self.randomness_combo.set("Низкий")
+            self.available_var.set(True)
+
             messagebox.showinfo("Успех", "Игра добавлена!")
         except Exception as e:
             messagebox.showerror("Ошибка БД", str(e))
 
     def load_games(self):
-        """Загружает все игры и применяет текущий фильтр"""
         self.apply_filter()
 
 
 if __name__ == "__main__":
     app = BoardGamesApp()
-    # Стиль для Checkbutton
+
     style = ttk.Style()
-    style.configure("Accent.TCheckbutton", background=CARD_BG, foreground=FG_LIGHT)
-    # Настройка Treeview
-    style.configure("Treeview", background=CARD_BG, fieldbackground=CARD_BG, foreground=FG_LIGHT, rowheight=32)
-    style.configure("Treeview.Heading", background="#4a2a8a", foreground=FG_LIGHT, font=("Segoe UI", 10, "bold"))
+    style.configure("Treeview", background=CARD_BG, fieldbackground=CARD_BG,
+                    foreground=FG_LIGHT, rowheight=32)
+    style.configure("Treeview.Heading", background="#4a2a8a",
+                    foreground=FG_LIGHT, font=("Segoe UI", 10, "bold"))
     style.map("Treeview", background=[('selected', ACCENT)])
+
     app.mainloop()
