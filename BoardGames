@@ -74,10 +74,16 @@ def init_db():
             time_minutes TEXT,
             interaction TEXT,
             randomness TEXT,
+            complexity TEXT DEFAULT 'Средняя',
             quantity INTEGER DEFAULT 1,
             price REAL DEFAULT 0
         )
     ''')
+
+    try:
+        cursor.execute("ALTER TABLE games ADD COLUMN complexity TEXT DEFAULT 'Средняя'")
+    except sqlite3.OperationalError:
+        pass
 
     conn.commit()
     conn.close()
@@ -86,6 +92,8 @@ def init_db():
 class BoardGamesApp(tk.Tk):
     def __init__(self):
         super().__init__()
+        self.action_buttons = {}
+        self.current_filtered_ids = []
         self.settings = load_settings()
         self.title("Настольные игры — Система управления базой данных")
         self.geometry(self.settings.get("window_geometry", "1300x750"))
@@ -170,6 +178,15 @@ class BoardGamesApp(tk.Tk):
                                              font=("Segoe UI", 11), state="readonly")
         self.randomness_combo.pack(fill=tk.X, pady=(0, 15))
         self.randomness_combo.set("Низкий")
+
+        # Сложность
+        tk.Label(fields_frame, text="СЛОЖНОСТЬ", font=("Segoe UI", 10, "bold"),
+                 bg=CARD_BG, fg=FG_LIGHT).pack(anchor="w", pady=(0, 5))
+        self.complexity_combo = ttk.Combobox(fields_frame,
+                                             values=["Низкая", "Средняя", "Высокая"],
+                                             font=("Segoe UI", 11), state="readonly")
+        self.complexity_combo.pack(fill=tk.X, pady=(0, 15))
+        self.complexity_combo.set("Средняя")
 
         # Количество
         quantity_frame = tk.Frame(fields_frame, bg=CARD_BG)
@@ -259,7 +276,6 @@ class BoardGamesApp(tk.Tk):
                                relief=tk.FLAT, padx=12, pady=5, cursor="hand2")
         import_btn.pack(side=tk.LEFT, padx=(0, 10))
 
-        # НОВАЯ КНОПКА - Очистить базу данных
         clear_db_btn = tk.Button(btn_frame, text="🗑️ Очистить базу", command=self.clear_all_games,
                                  font=("Segoe UI", 10, "bold"), bg="#cc0000", fg="white",
                                  relief=tk.FLAT, padx=12, pady=5, cursor="hand2")
@@ -320,6 +336,15 @@ class BoardGamesApp(tk.Tk):
         self.filter_randomness.set("")
         self.filter_randomness.bind("<<ComboboxSelected>>", lambda e: self.apply_filter())
 
+        tk.Label(filter_row2, text="Сложность:", bg=FILTER_BG, fg=FG_LIGHT, font=("Segoe UI", 9)).pack(side=tk.LEFT,
+                                                                                                       padx=(0, 5))
+        self.filter_complexity = ttk.Combobox(filter_row2,
+                                              values=["", "Низкая", "Средняя", "Высокая"],
+                                              width=10, state="readonly")
+        self.filter_complexity.pack(side=tk.LEFT, padx=(0, 15))
+        self.filter_complexity.set("")
+        self.filter_complexity.bind("<<ComboboxSelected>>", lambda e: self.apply_filter())
+
         tk.Label(filter_row2, text="Кол-во от:", bg=FILTER_BG, fg=FG_LIGHT, font=("Segoe UI", 9)).pack(side=tk.LEFT,
                                                                                                        padx=(0, 5))
         self.filter_qty_min = ttk.Spinbox(filter_row2, from_=0, to=99, width=4)
@@ -359,48 +384,49 @@ class BoardGamesApp(tk.Tk):
         scroll_y = ttk.Scrollbar(table_frame, orient=tk.VERTICAL)
         scroll_x = ttk.Scrollbar(table_frame, orient=tk.HORIZONTAL)
 
+        columns = ("name", "players", "age", "time", "interaction", "randomness", "complexity", "quantity", "price",
+                   "actions")
+
         self.tree = ttk.Treeview(table_frame,
-                                 columns=("name", "players", "age", "time", "interaction", "randomness", "quantity",
-                                          "price", "actions"),
-                                 show="headings", yscrollcommand=scroll_y.set, xscrollcommand=scroll_x.set)
+                                 columns=columns,
+                                 show="headings",
+                                 yscrollcommand=scroll_y.set,
+                                 xscrollcommand=scroll_x.set)
+
         scroll_y.config(command=self.tree.yview)
         scroll_x.config(command=self.tree.xview)
 
-        columns = {
-            "name": "Название",
-            "players": "Игроки",
-            "age": "Возраст",
-            "time": "Время (мин)",
-            "interaction": "Взаимодействие",
-            "randomness": "Случайность",
-            "quantity": "Кол-во",
-            "price": "Цена (₽)"
-        }
+        # Настройка заголовков - ДОБАВЛЯЕМ ВСЕ КОМАНДЫ
+        self.tree.heading("name", text="Название", command=lambda: self.sort_column("name", False))
+        self.tree.heading("players", text="Игроки", command=lambda: self.sort_column("players", False))
+        self.tree.heading("age", text="Возраст", command=lambda: self.sort_column("age", False))
+        self.tree.heading("time", text="Время", command=lambda: self.sort_column("time", False))
+        self.tree.heading("interaction", text="Взаимодействие", command=lambda: self.sort_column("interaction", False))
+        self.tree.heading("randomness", text="Случайность", command=lambda: self.sort_column("randomness", False))
+        self.tree.heading("complexity", text="Сложность", command=lambda: self.sort_column("complexity", False))
+        self.tree.heading("quantity", text="Кол-во", command=lambda: self.sort_column("quantity", False))
+        self.tree.heading("price", text="Цена", command=lambda: self.sort_column("price", False))
+        self.tree.heading("actions", text="Действия")  # БЕЗ команды сортировки
 
-        for col, text in columns.items():
-            self.tree.heading(col, text=text, command=lambda _col=col: self.sort_column(_col, False))
-
-            width_map = {
-                "name": 170, "players": 70, "age": 60, "time": 90,
-                "interaction": 120, "randomness": 80, "quantity": 60, "price": 80
-            }
-            self.tree.column(col, width=width_map.get(col, 100), minwidth=50,
-                             anchor="center" if col in ["quantity", "price"] else "w")
-
+        # Настройка ширины колонок
+        self.tree.column("name", width=150, anchor="w")
+        self.tree.column("players", width=70, anchor="center")
+        self.tree.column("age", width=70, anchor="center")
+        self.tree.column("time", width=80, anchor="center")
+        self.tree.column("interaction", width=100, anchor="center")
+        self.tree.column("randomness", width=90, anchor="center")
+        self.tree.column("complexity", width=90, anchor="center")
+        self.tree.column("quantity", width=60, anchor="center")
+        self.tree.column("price", width=80, anchor="center")
         self.tree.column("actions", width=100, anchor="center", stretch=False)
 
         self.tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         scroll_y.pack(side=tk.RIGHT, fill=tk.Y)
         scroll_x.pack(side=tk.BOTTOM, fill=tk.X)
 
-        self.action_buttons = {}
-        self.current_filtered_ids = []
-
-        self.tree.bind("<<TreeviewOpen>>", self.refresh_buttons)
-        self.tree.bind("<<TreeviewClose>>", self.refresh_buttons)
-        self.tree.bind("<Configure>", self.refresh_buttons)
-        scroll_y.config(command=self.on_scroll)
-        scroll_x.config(command=self.on_scroll)
+        # Привязываем события для кнопок
+        self.tree.bind("<ButtonRelease-1>", self.on_tree_click)
+        self.tree.bind("<Configure>", self.on_tree_configure)
 
         self.empty_label = tk.Label(right_panel,
                                     text="База данных пуста\nИспользуйте форму слева для добавления первой игры",
@@ -411,8 +437,105 @@ class BoardGamesApp(tk.Tk):
 
         self.bind("<Configure>", self.on_window_resize)
 
+    def on_tree_click(self, event):
+        """Обработчик клика по дереву - обновляет кнопки"""
+        self.after(100, self.refresh_buttons)
+
+    def on_tree_configure(self, event):
+        """Обработчик изменения размера дерева"""
+        self.after(100, self.refresh_buttons)
+
+    def sort_column(self, col, reverse):
+        """Универсальная сортировка для всех колонок"""
+        # 1. Получаем данные
+        l = [(self.tree.set(k, col), k) for k in self.tree.get_children('')]
+
+        # 2. Словари весов для категорий
+        randomness_weights = {"Низкий": 1, "Средний": 2, "Высокий": 3}
+        complexity_weights = {"Низкая": 1, "Средняя": 2, "Высокая": 3}
+
+        def get_sort_key(item):
+            val = item[0]
+
+            # Сортировка для Случайности
+            if col == 'randomness':
+                return randomness_weights.get(val, 0)
+
+            # Сортировка для Сложности
+            if col == 'complexity':
+                return complexity_weights.get(val, 0)
+
+            # Сортировка для Возраста (извлекаем число из '12+')
+            if col == 'age':
+                nums = re.findall(r'\d+', val)
+                return int(nums[0]) if nums else 0
+
+            # Сортировка для чисел (Цена, Время, Кол-во)
+            try:
+                # Убираем пробелы, меняем запятую на точку
+                clean_val = val.replace(',', '.').replace(' ', '')
+                return float(clean_val)
+            except ValueError:
+                pass
+
+            # Обычная сортировка (Название)
+            return val.lower()
+
+        # 3. Сортируем
+        l.sort(key=get_sort_key, reverse=reverse)
+
+        # 4. Переставляем строки
+        for index, (val, k) in enumerate(l):
+            self.tree.move(k, '', index)
+
+        # 5. Меняем направление сортировки для следующего клика
+        self.tree.heading(col, command=lambda: self.sort_column(col, not reverse))
+
+        # Обновляем кнопки, если они привязаны к строкам
+        if hasattr(self, 'refresh_buttons'):
+            self.after(50, self.refresh_buttons)
+
+    def refresh_buttons(self, event=None):
+        """Обновляет кнопки действий в таблице"""
+        # Удаляем старые кнопки
+        for btn_dict in self.action_buttons.values():
+            for btn in btn_dict.values():
+                if isinstance(btn, (tk.Button, tk.Frame)):
+                    try:
+                        btn.destroy()
+                    except:
+                        pass
+        self.action_buttons.clear()
+
+        # Создаем новые кнопки для каждой строки
+        for item in self.tree.get_children():
+            try:
+                # Получаем координаты колонки "actions"
+                col_bbox = self.tree.bbox(item, column="#10")  # "actions" - 10-я колонка
+                if col_bbox:
+                    x, y, width, height = col_bbox
+                    btn_frame = tk.Frame(self.tree, bg=CARD_BG)
+                    btn_frame.place(x=x + 5, y=y + 2, width=width - 10, height=height - 4)
+
+                    edit_btn = tk.Button(btn_frame, text="✏️", font=("Segoe UI", 9),
+                                         bg=CARD_BG, fg=FG_LIGHT, bd=1, relief=tk.SOLID,
+                                         highlightbackground=BUTTON_BORDER, highlightcolor=BUTTON_BORDER,
+                                         highlightthickness=1, cursor="hand2",
+                                         command=lambda i=item: self.edit_game(i))
+                    edit_btn.pack(side=tk.LEFT, padx=2, expand=True, fill=tk.BOTH)
+
+                    del_btn = tk.Button(btn_frame, text="🗑️", font=("Segoe UI", 9),
+                                        bg=CARD_BG, fg=FG_LIGHT, bd=1, relief=tk.SOLID,
+                                        highlightbackground=BUTTON_BORDER, highlightcolor=BUTTON_BORDER,
+                                        highlightthickness=1, cursor="hand2",
+                                        command=lambda i=item: self.delete_game(i))
+                    del_btn.pack(side=tk.LEFT, padx=2, expand=True, fill=tk.BOTH)
+
+                    self.action_buttons[item] = {"frame": btn_frame, "edit": edit_btn, "delete": del_btn}
+            except:
+                pass
+
     def clear_all_games(self):
-        """Удаляет все игры из базы данных"""
         if messagebox.askyesno("Подтверждение",
                                "Вы уверены, что хотите удалить ВСЕ игры из базы данных?\nЭто действие нельзя отменить!"):
             if messagebox.askyesno("Окончательное подтверждение", "Удалить ВСЕ игры?"):
@@ -428,7 +551,6 @@ class BoardGamesApp(tk.Tk):
                     messagebox.showerror("Ошибка", f"Не удалось очистить базу:\n{str(e)}")
 
     def clear_all_fields(self):
-        """Очищает все поля формы"""
         if messagebox.askyesno("Подтверждение", "Очистить все поля формы?"):
             self.name_entry.delete(0, tk.END)
             self.name_entry.insert(0, "Название игры...")
@@ -448,6 +570,7 @@ class BoardGamesApp(tk.Tk):
 
             self.interaction_combo.set("Кооперативная")
             self.randomness_combo.set("Низкий")
+            self.complexity_combo.set("Средняя")
 
             self.quantity_spin.delete(0, tk.END)
             self.quantity_spin.insert(0, "1")
@@ -481,47 +604,6 @@ class BoardGamesApp(tk.Tk):
         except:
             self.price_entry.delete(0, tk.END)
             self.price_entry.insert(0, "0.00")
-
-    def sort_column(self, col, reverse):
-        items = [(self.tree.set(item, col), item) for item in self.tree.get_children('')]
-
-        def sort_key(t):
-            val = t[0]
-
-            if col == "price":
-                try:
-                    return float(val.replace('₽', '').strip()) if val else 0
-                except:
-                    return 0
-
-            elif col == "time":
-                nums = re.findall(r'\d+', val)
-                return int(nums[0]) if nums else 0
-
-            elif col == "randomness":
-                order = {"Низкий": 0, "Средний": 1, "Высокий": 2}
-                return order.get(val, 0)
-
-            elif col == "age":
-                nums = re.findall(r'\d+', val)
-                return int(nums[0]) if nums else 0
-
-            elif col == "quantity":
-                try:
-                    return int(val) if val else 0
-                except:
-                    return 0
-
-            else:
-                return val.lower() if val else ""
-
-        items.sort(key=sort_key, reverse=reverse)
-
-        for index, (val, item) in enumerate(items):
-            self.tree.move(item, '', index)
-
-        self.tree.heading(col, command=lambda: self.sort_column(col, not reverse))
-        self.after(50, self.refresh_buttons)
 
     def on_available_change(self):
         if not self.available_var.get():
@@ -576,6 +658,7 @@ class BoardGamesApp(tk.Tk):
         time_filter = self.filter_time.get().strip().lower()
         interaction_filter = self.filter_interaction.get()
         randomness_filter = self.filter_randomness.get()
+        complexity_filter = self.filter_complexity.get()
 
         try:
             qty_min = int(self.filter_qty_min.get()) if self.filter_qty_min.get().strip() else None
@@ -606,13 +689,13 @@ class BoardGamesApp(tk.Tk):
         conn = sqlite3.connect(DB_FILE)
         cursor = conn.cursor()
         cursor.execute(
-            "SELECT id, name, players, age, time_minutes, interaction, randomness, quantity, price FROM games ORDER BY name")
+            "SELECT id, name, players, age, time_minutes, interaction, randomness, complexity, quantity, price FROM games ORDER BY name")
         all_games = cursor.fetchall()
         conn.close()
 
         filtered = []
         for game in all_games:
-            game_id, name, players, age, time_str, interaction, randomness, quantity, price = game
+            game_id, name, players, age, time_str, interaction, randomness, complexity, quantity, price = game
 
             if name_filter and name_filter not in name.lower():
                 continue
@@ -625,6 +708,8 @@ class BoardGamesApp(tk.Tk):
             if interaction_filter and interaction != interaction_filter:
                 continue
             if randomness_filter and randomness != randomness_filter:
+                continue
+            if complexity_filter and complexity != complexity_filter:
                 continue
             if qty_min is not None and quantity < qty_min:
                 continue
@@ -645,16 +730,17 @@ class BoardGamesApp(tk.Tk):
         if filtered:
             self.empty_label.place_forget()
             for game in filtered:
-                game_id, name, players, age, time_str, interaction, randomness, quantity, price = game
+                game_id, name, players, age, time_str, interaction, randomness, complexity, quantity, price = game
                 formatted_price = f"{price:.2f} ₽" if price else "0.00 ₽"
                 self.tree.insert("", tk.END, iid=game_id,
-                                 values=(name, players, age, time_str, interaction, randomness, quantity,
-                                         formatted_price, ""))
+                                 values=(name, players, age, time_str, interaction, randomness, complexity,
+                                         quantity, formatted_price, ""))
         else:
             self.empty_label.config(text="Нет игр, соответствующих фильтру\nИзмените условия фильтрации")
             self.empty_label.place(relx=0.5, rely=0.5, anchor="center")
 
-        self.after(100, self.refresh_buttons)
+        # Обновляем кнопки после загрузки данных
+        self.after(200, self.refresh_buttons)
 
     def reset_filter(self):
         self.filter_name.delete(0, tk.END)
@@ -663,54 +749,13 @@ class BoardGamesApp(tk.Tk):
         self.filter_time.delete(0, tk.END)
         self.filter_interaction.set("")
         self.filter_randomness.set("")
+        self.filter_complexity.set("")
         self.filter_qty_min.delete(0, tk.END)
         self.filter_qty_max.delete(0, tk.END)
         self.filter_price_min.delete(0, tk.END)
         self.filter_price_max.delete(0, tk.END)
         self.apply_filter()
         self.empty_label.config(text="База данных пуста\nИспользуйте форму слева для добавления первой игры")
-
-    def on_scroll(self, *args):
-        if args[0] == 'moveto':
-            self.tree.yview(*args)
-        else:
-            self.tree.yview_scroll(args[1], args[0])
-        self.refresh_buttons()
-
-    def refresh_buttons(self, event=None):
-        for btn_dict in self.action_buttons.values():
-            for btn in btn_dict.values():
-                if isinstance(btn, (tk.Button, tk.Frame)):
-                    try:
-                        btn.destroy()
-                    except:
-                        pass
-        self.action_buttons.clear()
-
-        for item in self.tree.get_children():
-            bbox = self.tree.bbox(item)
-            if bbox:
-                col_bbox = self.tree.bbox(item, column="#9")
-                if col_bbox:
-                    x, y, width, height = col_bbox
-                    btn_frame = tk.Frame(self.tree, bg=CARD_BG)
-                    btn_frame.place(x=x + 5, y=y + 2, width=width - 10, height=height - 4)
-
-                    edit_btn = tk.Button(btn_frame, text="✏️", font=("Segoe UI", 10),
-                                         bg=CARD_BG, fg=FG_LIGHT, bd=1, relief=tk.SOLID,
-                                         highlightbackground=BUTTON_BORDER, highlightcolor=BUTTON_BORDER,
-                                         highlightthickness=1, cursor="hand2",
-                                         command=lambda i=item: self.edit_game(i))
-                    edit_btn.pack(side=tk.LEFT, padx=2, expand=True, fill=tk.BOTH)
-
-                    del_btn = tk.Button(btn_frame, text="🗑️", font=("Segoe UI", 10),
-                                        bg=CARD_BG, fg=FG_LIGHT, bd=1, relief=tk.SOLID,
-                                        highlightbackground=BUTTON_BORDER, highlightcolor=BUTTON_BORDER,
-                                        highlightthickness=1, cursor="hand2",
-                                        command=lambda i=item: self.delete_game(i))
-                    del_btn.pack(side=tk.LEFT, padx=2, expand=True, fill=tk.BOTH)
-
-                    self.action_buttons[item] = {"frame": btn_frame, "edit": edit_btn, "delete": del_btn}
 
     def validate_name(self, name):
         if not name or name.strip() == "" or name.strip() == "Название игры...":
@@ -745,15 +790,6 @@ class BoardGamesApp(tk.Tk):
                 return False, "Если игра не в наличии, количество должно быть 0"
         return True, ""
 
-    def validate_price(self, price):
-        try:
-            price_num = float(price)
-            if price_num < 0:
-                return False, "Цена не может быть отрицательной"
-            return True, ""
-        except ValueError:
-            return False, "Цена должна быть числом"
-
     def show_field_error(self, field_name, error_message):
         messagebox.showerror(f"Ошибка в поле '{field_name}'", error_message)
 
@@ -761,7 +797,7 @@ class BoardGamesApp(tk.Tk):
         games_data = []
         for item in self.tree.get_children():
             values = self.tree.item(item, "values")
-            if values and len(values) >= 8:
+            if values and len(values) >= 9:
                 games_data.append({
                     'Название': values[0],
                     'Игроки': values[1],
@@ -769,8 +805,9 @@ class BoardGamesApp(tk.Tk):
                     'Время (мин)': values[3],
                     'Взаимодействие': values[4],
                     'Случайность': values[5],
-                    'Количество': values[6],
-                    'Цена': values[7].replace(' ₽', '')
+                    'Сложность': values[6],
+                    'Количество': values[7],
+                    'Цена': values[8].replace(' ₽', '')
                 })
 
         if not games_data:
@@ -810,13 +847,18 @@ class BoardGamesApp(tk.Tk):
 
             for index, row in df.iterrows():
                 data = row.tolist()
-                if len(data) < 8:
-                    continue
-                cursor.execute('''INSERT INTO games 
+                if len(data) >= 9:
+                    cursor.execute('''INSERT INTO games 
+                                 (name, players, age, time_minutes, interaction, randomness, complexity, quantity, price) 
+                                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)''',
+                                   (str(data[0]), str(data[1]), str(data[2]), str(data[3]),
+                                    str(data[4]), str(data[5]), str(data[6]), int(data[7]), float(data[8])))
+                elif len(data) >= 8:
+                    cursor.execute('''INSERT INTO games 
                                  (name, players, age, time_minutes, interaction, randomness, quantity, price) 
                                  VALUES (?, ?, ?, ?, ?, ?, ?, ?)''',
-                               (str(data[0]), str(data[1]), str(data[2]), str(data[3]),
-                                str(data[4]), str(data[5]), int(data[6]), float(data[7])))
+                                   (str(data[0]), str(data[1]), str(data[2]), str(data[3]),
+                                    str(data[4]), str(data[5]), int(data[6]), float(data[7])))
 
             conn.commit()
             conn.close()
@@ -830,13 +872,13 @@ class BoardGamesApp(tk.Tk):
         if not values:
             return
 
-        old_name, players, age, time_str, interaction, randomness, quantity, price_str = values[:8]
+        old_name, players, age, time_str, interaction, randomness, complexity, quantity, price_str = values[:9]
         price_value = float(price_str.replace(' ₽', '').replace(' ₽', ''))
 
         dialog = tk.Toplevel(self)
         dialog.title("Редактировать игру")
         dialog.configure(bg=CARD_BG)
-        dialog.geometry("420x700")
+        dialog.geometry("420x750")
         dialog.resizable(False, False)
         dialog.transient(self)
         dialog.grab_set()
@@ -878,6 +920,13 @@ class BoardGamesApp(tk.Tk):
                                         font=("Segoe UI", 11), state="readonly")
         randomness_combo.pack(padx=20, pady=(0, 10), fill=tk.X)
         randomness_combo.set(randomness)
+
+        tk.Label(dialog, text="Сложность", font=("Segoe UI", 10, "bold"),
+                 bg=CARD_BG, fg=FG_LIGHT).pack(anchor="w", padx=20, pady=(5, 5))
+        complexity_combo = ttk.Combobox(dialog, values=["Низкая", "Средняя", "Высокая"],
+                                        font=("Segoe UI", 11), state="readonly")
+        complexity_combo.pack(padx=20, pady=(0, 10), fill=tk.X)
+        complexity_combo.set(complexity)
 
         tk.Label(dialog, text="Количество", font=("Segoe UI", 10, "bold"),
                  bg=CARD_BG, fg=FG_LIGHT).pack(anchor="w", padx=20, pady=(5, 5))
@@ -1041,14 +1090,15 @@ class BoardGamesApp(tk.Tk):
             cursor = conn.cursor()
             cursor.execute('''
                 UPDATE games 
-                SET name=?, players=?, age=?, time_minutes=?, interaction=?, randomness=?, quantity=?, price=?
+                SET name=?, players=?, age=?, time_minutes=?, interaction=?, randomness=?, complexity=?, quantity=?, price=?
                 WHERE id=?
             ''', (new_name, new_players, new_age, new_time,
-                  interaction_combo.get(), randomness_combo.get(), new_quantity, new_price, item))
+                  interaction_combo.get(), randomness_combo.get(), complexity_combo.get(), new_quantity, new_price,
+                  item))
             conn.commit()
             conn.close()
             dialog.destroy()
-            self.apply_filter()
+            self.load_games()
             messagebox.showinfo("Успех", f"Игра '{new_name}' обновлена!")
 
         btn_frame = tk.Frame(dialog, bg=CARD_BG)
@@ -1069,7 +1119,7 @@ class BoardGamesApp(tk.Tk):
             cursor.execute("DELETE FROM games WHERE id = ?", (item,))
             conn.commit()
             conn.close()
-            self.apply_filter()
+            self.load_games()
             messagebox.showinfo("Удалено", f"Игра '{game_name}' удалена.")
 
     def clear_placeholder(self, entry, placeholder):
@@ -1091,6 +1141,7 @@ class BoardGamesApp(tk.Tk):
         time_m = self.time_entry.get().strip()
         qty = self.quantity_spin.get().strip()
         price_text = self.price_entry.get().strip()
+        complexity = self.complexity_combo.get()
 
         for val, func in [(name, self.validate_name), (players, self.validate_players),
                           (age, self.validate_age), (time_m, self.validate_time)]:
@@ -1117,10 +1168,10 @@ class BoardGamesApp(tk.Tk):
             conn = sqlite3.connect(DB_FILE)
             cursor = conn.cursor()
             cursor.execute('''INSERT INTO games 
-                (name, players, age, time_minutes, interaction, randomness, quantity, price) 
-                VALUES (?,?,?,?,?,?,?,?)''',
+                (name, players, age, time_minutes, interaction, randomness, complexity, quantity, price) 
+                VALUES (?,?,?,?,?,?,?,?,?)''',
                            (name, players, age, time_m, self.interaction_combo.get(),
-                            self.randomness_combo.get(), int(qty), price))
+                            self.randomness_combo.get(), complexity, int(qty), price))
             conn.commit()
             conn.close()
             self.load_games()
@@ -1139,6 +1190,7 @@ class BoardGamesApp(tk.Tk):
             self.price_entry.insert(0, "0.00")
             self.interaction_combo.set("Кооперативная")
             self.randomness_combo.set("Низкий")
+            self.complexity_combo.set("Средняя")
             self.available_var.set(True)
 
             messagebox.showinfo("Успех", "Игра добавлена!")
@@ -1155,8 +1207,10 @@ if __name__ == "__main__":
     style = ttk.Style()
     style.configure("Treeview", background=CARD_BG, fieldbackground=CARD_BG,
                     foreground=FG_LIGHT, rowheight=32)
-    style.configure("Treeview.Heading", background="#4a2a8a",
-                    foreground=FG_LIGHT, font=("Segoe UI", 10, "bold"))
+    style.configure("Treeview.Heading",
+                    foreground="black",
+                    background="white",
+                    font=("Segoe UI", 10, "bold"))
     style.map("Treeview", background=[('selected', ACCENT)])
 
     app.mainloop()
